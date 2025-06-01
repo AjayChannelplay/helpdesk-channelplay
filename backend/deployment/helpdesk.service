@@ -1,0 +1,17 @@
+[Unit]
+Description=Helpdesk Backend Service
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/helpdesk/backend
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=helpdesk-backend
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

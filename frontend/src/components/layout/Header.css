@@ -1,0 +1,415 @@
+/* Simplified Header Styles */
+.simplified-header {
+  background-color: #ffffff;
+  padding: 0 20px;
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* Specific styles for the tickets header */
+.tickets-header {
+  padding: 10px 25px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* Header Layout */
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Logo Styling */
+.logo {
+  display: flex;
+  align-items: center;
+  margin-right: 40px;
+}
+
+.logo a {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.logo-box {
+  background-color: #3498db;
+  color: white;
+  font-weight: 600;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  margin-right: 8px;
+}
+
+.logo-text {
+  font-weight: 600;
+  color: #333;
+  font-size: 16px;
+}
+
+.channelplay-logo-img {
+  height: 35px; /* Adjust as needed */
+  width: auto;   /* Maintain aspect ratio */
+  display: block; /* Or inline-block, depending on layout needs */
+}
+
+/* Navigation Styles */
+.main-navigation {
+  display: flex;
+  gap: 25px;
+}
+
+.main-navigation .nav-item {
+  color: #4a4a4a;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.main-navigation .nav-item:hover {
+  color: #3498db;
+  background-color: rgba(52, 152, 219, 0.05);
+}
+
+.main-navigation .nav-item.active {
+  color: #3498db;
+  background-color: rgba(52, 152, 219, 0.1);
+  font-weight: 600;
+}
+
+/* User Controls */
+.user-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-initials {
+  background-color: #f5f5f5;
+  color: #666;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.user-name {
+  color: #666;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Main Navigation in Navbar */
+.main-navigation .nav-link {
+  color: #4a4a4a;
+  font-weight: 500;
+  margin: 0 10px;
+  padding: 8px 12px;
+  border-radius: 5px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+}
+
+.main-navigation .nav-link:hover {
+  color: #3498db;
+  background-color: rgba(52, 152, 219, 0.05);
+}
+
+.main-navigation .nav-link.active {
+  color: #3498db;
+  background-color: rgba(52, 152, 219, 0.1);
+}
+
+/* Admin links styling */
+.admin-link {
+  background-color: #f0f7ff;
+  color: #3498db !important;
+  font-weight: 500;
+  border: 1px solid #e6f3ff;
+}
+
+.admin-link:hover {
+  background-color: #e0f0ff !important;
+  color: #2980b9 !important;
+  border-color: #cce7ff;
+}
+
+.admin-link.active {
+  background-color: #3498db !important;
+  color: white !important;
+  border-color: #2980b9;
+}
+
+.nav-icon {
+  margin-right: 5px;
+  font-size: 14px;
+}
+
+/* User Menu */
+.user-dropdown-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-circle {
+  background-color: #f5f5f5;
+  color: #666;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* Dropdown Icons */
+.dropdown-icon {
+  margin-right: 8px;
+  font-size: 14px;
+  color: #666;
+}
+
+/* Profile Menu & Dropdown */
+.profile-menu {
+  position: relative;
+  z-index: 1000;
+}
+
+.profile-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1px solid #eaeaea;
+  border-radius: 24px;
+  padding: 6px 12px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.profile-button:hover {
+  background-color: #f5f5f5;
+  border-color: #ddd;
+}
+
+.profile-name {
+  font-weight: 500;
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #3498db;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.chevron {
+  font-size: 10px;
+  color: #888;
+  transition: transform 0.2s ease;
+}
+
+.chevron.up {
+  transform: rotate(180deg);
+}
+
+/* Dropdown */
+.profile-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  overflow: hidden;
+  border: 1px solid #eaeaea;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-header {
+  padding: 16px;
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: white;
+}
+
+.avatar-large {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background-color: white;
+  color: #3498db;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 20px;
+}
+
+.name {
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 2px;
+}
+
+.role {
+  font-size: 13px;
+  opacity: 0.8;
+  text-transform: capitalize;
+}
+
+.dropdown-body {
+  padding: 8px 0;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  color: #555;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+
+.dropdown-item:hover {
+  background-color: #f8f9fa;
+  color: #3498db;
+}
+
+.dropdown-item svg {
+  color: #888;
+  font-size: 16px;
+  width: 16px;
+}
+
+.dropdown-item:hover svg {
+  color: #3498db;
+}
+
+.divider {
+  height: 1px;
+  background-color: #eaeaea;
+  margin: 8px 0;
+}
+
+.section-title {
+  padding: 5px 16px;
+  font-size: 12px;
+  color: #888;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dropdown-item.logout {
+  color: #e74c3c;
+}
+
+.dropdown-item.logout:hover {
+  background-color: #fef5f5;
+}
+
+.dropdown-item.logout svg {
+  color: #e74c3c;
+}
+
+/* Modern Navbar Brand */
+.modern-brand {
+  padding: 0;
+}
+
+.modern-navbar {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #f0f0f0;
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.05);
+  padding: 10px 20px;
+}
+
+/* Ticket Header Buttons and Controls */
+.ticket-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ticket-header-controls .btn {
+  border-radius: 5px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ticket-header-controls .btn-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+/* New Ticket Button */
+.btn-new-ticket {
+  background-color: #2ecc71;
+  border-color: #2ecc71;
+  color: white;
+  box-shadow: 0 2px 5px rgba(46, 204, 113, 0.3);
+}
+
+.btn-new-ticket:hover {
+  background-color: #27ae60;
+  border-color: #27ae60;
+  box-shadow: 0 3px 8px rgba(46, 204, 113, 0.4);
+}

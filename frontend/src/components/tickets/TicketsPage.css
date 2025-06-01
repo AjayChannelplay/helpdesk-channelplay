@@ -1,0 +1,149 @@
+.tickets-container {
+  padding: 20px;
+  height: calc(100vh - 60px);
+}
+
+.tickets-sidebar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ticket-list {
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+}
+
+.ticket-section {
+  margin-bottom: 10px;
+}
+
+.ticket-section-header {
+  padding: 10px 15px;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  font-weight: 600;
+}
+
+.ticket-item {
+  padding: 12px 15px;
+  border-bottom: 1px solid #dee2e6;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.ticket-item:hover {
+  background-color: #f8f9fa;
+}
+
+.ticket-item.active {
+  background-color: #e9ecef;
+  border-left: 3px solid #007bff;
+}
+
+.ticket-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.ticket-subject {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80%;
+}
+
+.ticket-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.ticket-customer {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70%;
+}
+
+.ticket-message {
+  color: #6c757d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticket-time {
+  color: #6c757d;
+}
+
+.ticket-detail {
+  height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+}
+
+.conversation-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.conversation {
+  padding: 15px;
+}
+
+.message-item {
+  display: flex;
+  margin-bottom: 20px;
+}
+
+.message-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 15px;
+  background-color: #e9ecef;
+  color: #495057;
+}
+
+.message-content {
+  flex: 1;
+  max-width: calc(100% - 55px);
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.message-header small {
+  color: #6c757d;
+}
+
+.message-body {
+  background-color: #f8f9fa;
+  padding: 12px;
+  border-radius: 8px;
+  position: relative;
+}
+
+.message-item.customer .message-body {
+  background-color: #e9ecef;
+}
+
+.message-item.agent .message-body {
+  background-color: #e6f3ff;
+}
+
+.message-item.internal .message-body {
+  background-color: #fff8e6;
+  border: 1px dashed #ffc107;
+}

@@ -1,0 +1,22 @@
+.desks-page-container {
+  max-width: 900px;
+  margin: auto;
+}
+
+.card-header h2 {
+  font-size: 1.75rem;
+  margin-bottom: 0;
+}
+
+.list-group-item {
+  transition: background-color 0.2s ease-in-out;
+}
+
+.list-group-item:hover {
+  background-color: #f8f9fa;
+}
+
+.fw-bold {
+  font-size: 1.1rem;
+  color: #007bff;
+}
