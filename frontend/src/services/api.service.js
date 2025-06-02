@@ -2,13 +2,15 @@ import axios from 'axios';
 
 // Create an axios instance with default config
 const API = axios.create({
-  baseURL: import.meta.env.PROD 
-    ? '/api' // Production - adjust based on your deployment
-    : 'http://localhost:3001/api', // Development
+  baseURL: import.meta.env.VITE_API_URL 
+    ? `${import.meta.env.VITE_API_URL}/api` // Use environment variable
+    : 'http://localhost:3001/api', // Fallback to localhost
   headers: {
     'Content-Type': 'application/json'
   }
 });
+
+console.log('API base URL:', import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : 'http://localhost:3001/api');
 
 // Add request interceptor to include auth token
 API.interceptors.request.use(
