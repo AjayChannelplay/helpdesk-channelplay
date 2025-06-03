@@ -57,7 +57,12 @@ app.get('/', (req, res) => {
   res.json({ message: 'Welcome to Channelplay Helpdesk API' });
 });
 
+// Import the email polling service
+const { startPolling } = require('./services/emailPolling.service');
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  // Start the email polling service after the server is up
+  startPolling();
 });

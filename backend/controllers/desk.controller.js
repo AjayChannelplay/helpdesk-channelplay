@@ -76,7 +76,7 @@ exports.getDeskById = async (req, res) => {
 // Create desk
 exports.createDesk = async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, description, email_address, provider_type } = req.body;
     
     // Create desk with Supabase
     const { data: newDesk, error } = await supabase
@@ -85,6 +85,8 @@ exports.createDesk = async (req, res) => {
         { 
           name,
           description,
+          email_address,
+          provider_type,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }

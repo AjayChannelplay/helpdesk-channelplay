@@ -4,96 +4,32 @@ const Desk = require('../models/desk.model');
 const Message = require('../models/message.model');
 const { supabase } = require('../config/db.config');
 const axios = require('axios');
+const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
 
-// Helper function to get Microsoft Graph API access token for a desk
-exports.getMicrosoftAccessToken = async function(deskId) {
-  try {
-    console.log('Getting Microsoft access token for desk:', deskId);
-    
-    // Get integration details for the desk
-    const { data: integration, error } = await supabase
-      .from('email_integrations')
-      .select('*')
-      .eq('desk_id', deskId)
-      .single();
-    
-    console.log('Integration fetch result:', error ? 'Error' : 'Success');
-    
-    if (error) {
-      console.error('Integration fetch error:', error.message);
-      throw new Error(`No email integration found for this desk: ${error.message}`);
-    }
-    
-    if (!integration) {
-      console.error('No integration data found for desk ID:', deskId);
-      throw new Error('No email integration found for this desk');
-    }
-    
-    console.log('Integration found:', { 
-      id: integration.id,
-      desk_id: integration.desk_id,
-      provider: integration.provider,
-      hasAccessToken: !!integration.access_token,
-      hasRefreshToken: !!integration.refresh_token
-    });
-    
-    if (!integration.access_token) {
-      throw new Error('Access token not available. Please authenticate with Microsoft.');
-    }
-    
-    // Check if token is expired
-    const tokenExpiresAt = new Date(integration.token_expires_at);
-    const now = new Date();
-    
-    if (now >= tokenExpiresAt) {
-      // Token is expired, refresh it
-      if (!integration.refresh_token) {
-        throw new Error('Refresh token not available. Please re-authenticate with Microsoft.');
-      }
-      
-      // Exchange refresh token for new access token
-      const tokenResponse = await axios.post(
-        'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-        new URLSearchParams({
-          client_id: integration.client_id,
-          client_secret: integration.client_secret,
-          refresh_token: integration.refresh_token,
-          grant_type: 'refresh_token',
-          scope: 'Mail.Read Mail.Send offline_access User.Read'
-        }),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-      
-      // Update integration with new tokens
-      const { access_token, refresh_token, expires_in } = tokenResponse.data;
-      
-      // Calculate new expiration time
-      const expiresAt = new Date();
-      expiresAt.setSeconds(expiresAt.getSeconds() + expires_in);
-      
-      await supabase
-        .from('email_integrations')
-        .update({
-          access_token,
-          refresh_token,
-          token_expires_at: expiresAt.toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', integration.id);
-      
-      return access_token;
-    }
-    
-    return integration.access_token;
-  } catch (error) {
-    console.error('Error getting Microsoft access token:', error);
-    throw error;
+// Utility function to extract desk ID from request (handling both camelCase and snake_case)
+const extractDeskId = (req) => {
+  let desk_id;
+  // Check query parameters
+  if (req.query.desk_id) {
+    desk_id = String(req.query.desk_id);
+    console.log('Using desk_id from query params:', desk_id);
+  } else if (req.query.deskId) {
+    desk_id = String(req.query.deskId);
+    console.log('Using deskId (camelCase) from query params:', desk_id);
   }
-}
+  // Check body parameters if not found in query
+  else if (req.body && req.body.desk_id) {
+    desk_id = String(req.body.desk_id);
+    console.log('Using desk_id from form body:', desk_id);
+  } else if (req.body && req.body.deskId) {
+    desk_id = String(req.body.deskId);
+    console.log('Using deskId (camelCase) from form body:', desk_id);
+  } else {
+    console.error('No desk_id found in either query or body');
+    desk_id = null;
+  }
+  return desk_id;
+};
 
 // Reply to an email directly using Microsoft Graph API
 exports.replyToEmail = async (req, res) => {
@@ -108,18 +44,13 @@ exports.replyToEmail = async (req, res) => {
     // Extract emailId from path parameter
     const { emailId } = req.params;
     
-    // IMPORTANT: Get desk_id from EITHER query parameters OR form body
-    // This provides flexibility and backward compatibility
-    let desk_id;
-    if (req.query.desk_id) {
-      desk_id = String(req.query.desk_id);
-      console.log('Using desk_id from query params:', desk_id);
-    } else if (req.body && req.body.desk_id) {
-      desk_id = String(req.body.desk_id);
-      console.log('Using desk_id from form body:', desk_id);
-    } else {
-      console.error('No desk_id found in either query or body');
-      desk_id = null;
+    // Extract desk_id using utility function (handles both desk_id and deskId formats)
+    const desk_id = extractDeskId(req);
+    
+    // Enhanced validation for desk_id
+    if (!desk_id || desk_id === 'null' || desk_id === 'undefined') {
+      console.error(`Invalid desk_id: '${desk_id}'. Type: ${typeof desk_id}`);
+      return res.status(400).json({ message: 'Desk ID is required or invalid' });
     }
     
     // When using multer, form fields are in req.body and files are in req.files
@@ -164,7 +95,7 @@ exports.replyToEmail = async (req, res) => {
     console.log('Replying to email ID:', emailId, 'for desk:', desk_id);
     
     // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(desk_id);
+    const accessToken = await getMicrosoftAccessToken(desk_id);
     
     // Format CC recipients for Microsoft Graph API
     const formattedCcRecipients = cc_recipients.map(email => ({
@@ -241,6 +172,45 @@ exports.replyToEmail = async (req, res) => {
         }
       }
     );
+
+    // Successfully sent reply via Graph API, now log it to our database
+    try {
+      // Get sender's (desk's) email and name from Graph API /me endpoint
+      const meResponse = await axios.get('https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const senderGraphUser = meResponse.data;
+      const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
+      const deskDisplayName = senderGraphUser.displayName;
+
+      const messageDataForDb = {
+        desk_id: desk_id,
+        microsoft_message_id: null, // Graph API /reply doesn't return the new message ID directly
+        microsoft_conversation_id: originalMessage.conversationId,
+        subject: originalMessage.subject, // Replies usually adopt the original subject, possibly prefixed with "Re:"
+        body_html: formattedContent,
+        body_preview: content.substring(0, 255), // Simple preview
+        from_address: deskEmailAddress,
+        from_name: deskDisplayName,
+        to_recipients: calculatedReplyToRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
+        cc_recipients: formattedCcRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
+        bcc_recipients: [], // Not typically part of a reply form
+        sent_at: new Date().toISOString(), // Use sent_at for outgoing
+        direction: 'outgoing',
+        in_reply_to_microsoft_id: emailId, // ID of the message being replied to
+        is_read_on_server: true, // It's an outgoing message
+        has_attachments: attachments.length > 0,
+        importance: originalMessage.importance, // Inherit importance or set a default
+        is_internal: false, // Assuming external reply
+      };
+
+      await Message.logMessage(messageDataForDb);
+      console.log(`[EmailCtrl] Successfully logged outgoing reply for original email ${emailId} to DB.`);
+
+    } catch (dbError) {
+      console.error(`[EmailCtrl] Failed to log outgoing reply for email ${emailId} to database:`, dbError.message, dbError.stack);
+      // Do not fail the whole operation if DB logging fails, but log the error
+    }
     
     return res.status(200).json({ message: 'Reply sent successfully' });
   } catch (error) {
@@ -250,6 +220,186 @@ exports.replyToEmail = async (req, res) => {
       console.error('API response data:', error.response.data);
     }
     return res.status(500).json({ message: error.message || 'Error replying to email' });
+  }
+};
+
+// Resolve a ticket and send a resolution email with feedback options
+exports.resolveTicket = async (req, res) => {
+  try {
+    console.log('DEBUGGING resolveTicket request:');
+    console.log('Request parameters:', req.params);
+    console.log('Request body:', req.body);
+    console.log('Request query:', req.query);
+    
+    // Extract emailId from path parameter
+    const { emailId } = req.params;
+    
+    // Extract desk_id using utility function (handles both desk_id and deskId formats)
+    const desk_id = extractDeskId(req);
+    
+    // Enhanced validation for desk_id
+    if (!desk_id || desk_id === 'null' || desk_id === 'undefined') {
+      console.error(`Invalid desk_id: '${desk_id}'. Type: ${typeof desk_id}`);
+      return res.status(400).json({ message: 'Desk ID is required or invalid' });
+    }
+    
+    // Validate required fields
+    if (!emailId) {
+      return res.status(400).json({ message: 'Email ID is required' });
+    }
+    
+    // Enhanced validation for desk_id
+    if (!desk_id || desk_id === 'null' || desk_id === 'undefined') {
+      console.error(`Invalid desk_id: '${desk_id}'. Type: ${typeof desk_id}`);
+      return res.status(400).json({ message: 'Desk ID is required or invalid' });
+    }
+    
+    console.log(`Resolving ticket for email ID: ${emailId}, desk: ${desk_id}`);
+    
+    // Get access token for Microsoft Graph API
+    const accessToken = await getMicrosoftAccessToken(desk_id);
+    
+    // Get message details to get original recipients
+    const messageResponse = await axios.get(
+      `https://graph.microsoft.com/v1.0/me/messages/${emailId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    const originalMessage = messageResponse.data;
+    
+    // Create the email content with emoji feedback options
+    const resolutionContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px;">
+        <h2 style="color: #4CAF50;">Your ticket has been resolved</h2>
+        <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
+        <p>We'd love to hear about your experience. Please rate our service by clicking one of the options below:</p>
+        
+        <div style="margin: 30px 0; text-align: center;">
+          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=positive" style="text-decoration: none; margin: 0 10px;">
+            <span style="font-size: 32px;">😃</span>
+            <p>Great!</p>
+          </a>
+          
+          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=neutral" style="text-decoration: none; margin: 0 10px;">
+            <span style="font-size: 32px;">😐</span>
+            <p>Okay</p>
+          </a>
+          
+          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=negative" style="text-decoration: none; margin: 0 10px;">
+            <span style="font-size: 32px;">😞</span>
+            <p>Not satisfied</p>
+          </a>
+        </div>
+        
+        <p>If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
+        <p>Best regards,<br>Support Team</p>
+      </div>
+    `;
+    
+    // Calculate recipients from original message
+    const calculatedReplyToRecipients = originalMessage.from ? [originalMessage.from] : (originalMessage.sender ? [originalMessage.sender] : []);
+    
+    // Send resolution email using Microsoft Graph API
+    await axios.post(
+      `https://graph.microsoft.com/v1.0/me/messages/${emailId}/reply`,
+      {
+        message: {
+          toRecipients: calculatedReplyToRecipients,
+          body: {
+            contentType: 'HTML',
+            content: resolutionContent
+          }
+        }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    // Try to update ticket status if associated with a ticket
+    try {
+      // First, find if this email is associated with a ticket
+      const { data: messageData, error: messageError } = await supabase
+        .from('messages')
+        .select('ticket_id')
+        .eq('microsoft_message_id', emailId)
+        .maybeSingle();
+
+      if (messageError) {
+        console.error('Error finding message in database:', messageError);
+      } else if (messageData && messageData.ticket_id) {
+        // If message is associated with a ticket, update ticket status to closed
+        const { error: updateError } = await supabase
+          .from('tickets')
+          .update({ status: 'closed', updated_at: new Date().toISOString() })
+          .eq('id', messageData.ticket_id);
+          
+        if (updateError) {
+          console.error('Error updating ticket status:', updateError);
+        } else {
+          console.log(`Successfully updated ticket ${messageData.ticket_id} status to closed`);
+        }
+      }
+    } catch (dbError) {
+      console.error('Error updating ticket status:', dbError);
+      // Don't fail the whole operation if updating ticket status fails
+    }
+    
+    // Log the outgoing resolution email to our database
+    try {
+      // Get sender's (desk's) email and name
+      const meResponse = await axios.get('https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const senderGraphUser = meResponse.data;
+      const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
+      const deskDisplayName = senderGraphUser.displayName;
+
+      const messageDataForDb = {
+        desk_id: desk_id,
+        microsoft_message_id: null, // Graph API /reply doesn't return the new message ID directly
+        microsoft_conversation_id: originalMessage.conversationId,
+        subject: `Re: ${originalMessage.subject}`, // Prefixed with Re:
+        body_html: resolutionContent,
+        body_preview: "Your ticket has been resolved. Thank you for contacting our support team!",
+        from_address: deskEmailAddress,
+        from_name: deskDisplayName,
+        to_recipients: calculatedReplyToRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
+        cc_recipients: [],
+        bcc_recipients: [],
+        sent_at: new Date().toISOString(),
+        direction: 'outgoing',
+        in_reply_to_microsoft_id: emailId,
+        is_read_on_server: true,
+        has_attachments: false,
+        importance: originalMessage.importance,
+        is_internal: false,
+      };
+
+      await Message.logMessage(messageDataForDb);
+      console.log(`[EmailCtrl] Successfully logged resolution email for ticket with original email ${emailId} to DB.`);
+
+    } catch (dbError) {
+      console.error(`[EmailCtrl] Failed to log resolution email to database:`, dbError.message, dbError.stack);
+      // Do not fail the operation if DB logging fails
+    }
+    
+    return res.status(200).json({ message: 'Ticket resolved and resolution email sent successfully' });
+  } catch (error) {
+    console.error('Error resolving ticket:', error);
+    if (error.response) {
+      console.error('API response status:', error.response.status);
+      console.error('API response data:', error.response.data);
+    }
+    return res.status(500).json({ message: error.message || 'Error resolving ticket' });
   }
 };
 
@@ -270,7 +420,7 @@ exports.getAttachment = async (req, res) => {
     console.log(`Fetching attachment ${attachmentId} for email ${emailId}`);
     
     // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(desk_id);
+    const accessToken = await getMicrosoftAccessToken(desk_id);
     
     // Get attachment metadata
     const attachmentMetadataResponse = await axios.get(
@@ -401,7 +551,7 @@ exports.sendEmail = async (req, res) => {
     }
     
     // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(desk_id);
+    const accessToken = await getMicrosoftAccessToken(desk_id);
     
     // Prepare email using Microsoft Graph API
     const emailRecipients = recipients && recipients.length > 0 ? 
@@ -454,6 +604,46 @@ exports.sendEmail = async (req, res) => {
         }
       }
     );
+
+    // Successfully sent email via Graph API, now log it to our database
+    try {
+      // Get sender's (desk's) email and name from Graph API /me endpoint
+      const meResponse = await axios.get('https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const senderGraphUser = meResponse.data;
+      const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
+      const deskDisplayName = senderGraphUser.displayName;
+
+      const messageDataForDb = {
+        desk_id: desk_id,
+        microsoft_message_id: null, // /sendMail endpoint doesn't return the new message ID directly
+        microsoft_conversation_id: null, // New email, so new conversation (or null if not tracked this way initially)
+        subject: `Re: ${ticket.subject}`, // Matches the subject sent
+        body_html: content,
+        body_preview: content.substring(0, 255),
+        from_address: deskEmailAddress,
+        from_name: deskDisplayName,
+        to_recipients: emailRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name || r.emailAddress.address })),
+        cc_recipients: [], // sendEmail currently doesn't explicitly handle CCs from request body
+        bcc_recipients: [], // sendEmail currently doesn't explicitly handle BCCs from request body
+        sent_at: new Date().toISOString(),
+        direction: 'outgoing',
+        in_reply_to_microsoft_id: null, // This is a new email, not a reply to a specific MS message ID in this context
+        is_read_on_server: true,
+        has_attachments: attachments.length > 0,
+        importance: 'normal', // Or derive from ticket if available
+        is_internal: false,
+        ticket_id: ticketId, // Associate with the ticket
+      };
+
+      await Message.logMessage(messageDataForDb);
+      console.log(`[EmailCtrl] Successfully logged outgoing email for ticket ${ticketId} to DB.`);
+
+    } catch (dbError) {
+      console.error(`[EmailCtrl] Failed to log outgoing email for ticket ${ticketId} to database:`, dbError.message, dbError.stack);
+      // Do not fail the whole operation if DB logging fails, but log the error
+    }
     
     // Save reply in database
     const { data: reply, error: replyError } = await supabase
@@ -490,139 +680,125 @@ exports.sendEmail = async (req, res) => {
 
 // Fetch emails for a desk using Microsoft Graph API
 exports.fetchEmails = async (req, res) => {
+  // TODO: Implement robust pagination for conversations
+  // For now, fetches recent messages and forms conversations. Client might need to handle 'load more'.
+  const PAGE_LIMIT = 20; // Number of conversations per page (approximate)
+  const MESSAGE_FETCH_LIMIT = 100; // Number of recent messages to fetch to build conversations
   try {
     // Check for both parameter formats (deskId and desk_id) for better compatibility
     const deskId = req.query.deskId || req.query.desk_id;
-    console.log('Received request for all emails. Query params:', req.query);
+    console.log('Received request for unread emails with conversation view. Query params:', req.query);
     
     if (!deskId) {
       return res.status(400).json({ message: 'Desk ID is required' });
     }
     
-    console.log('Fetching all emails for desk:', deskId);
+    console.log('Fetching unread emails for desk:', deskId);
     
-    // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(deskId);
-    console.log('Access token retrieved successfully');
-    
-    // Fetch both read and unread emails from Microsoft Graph API
+    // Fetch messages from local DB
     try {
-      console.log('Calling Microsoft Graph API to fetch all emails...');
-      
-      // Add parameters to sort by receivedDateTime desc to get newest first
-      const emailsResponse = await axios.get(
-        'https://graph.microsoft.com/v1.0/me/messages?$top=100&$select=id,subject,bodyPreview,body,from,toRecipients,receivedDateTime,hasAttachments,importance,isRead,conversationId&$orderby=receivedDateTime desc', 
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          }
+      const { data: dbMessages, error: dbError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('desk_id', deskId)
+        .order('received_at', { ascending: false }) // Get most recent messages first
+        .limit(MESSAGE_FETCH_LIMIT);
+
+      if (dbError) {
+        console.error('[EmailCtrl] Error fetching messages from DB:', dbError.message);
+        // If this is due to the Supabase API key issue, this will fail.
+        if (dbError.message.includes('Invalid API key')) {
+          console.error("[EmailCtrl] CRITICAL: Supabase API key is invalid. Cannot fetch messages.");
         }
-      );
-      
-      console.log('Microsoft Graph API response received, emails count:', emailsResponse.data.value?.length || 0);
-      
-      // Group emails by conversation ID
-      const conversationMap = {};
-      emailsResponse.data.value.forEach(email => {
-        if (!conversationMap[email.conversationId]) {
-          conversationMap[email.conversationId] = [];
-        }
-        
-        // If email has attachments, fetch basic attachment info
-        if (email.hasAttachments) {
-          // Mark for attachment info fetching later
-          email.needsFetchAttachments = true;
-        }
-        
-        conversationMap[email.conversationId].push(email);
-      });
-      
-      // Sort emails within each conversation by date
-      Object.keys(conversationMap).forEach(conversationId => {
-        conversationMap[conversationId].sort((a, b) => {
-          return new Date(a.receivedDateTime) - new Date(b.receivedDateTime);
-        });
-      });
-      
-      // Now create a structure of conversation threads instead of individual emails
-      const conversations = [];
-      
-      // Fetch attachment info for emails that need it
-      for (const conversationId of Object.keys(conversationMap)) {
-        const messagesInConversation = conversationMap[conversationId];
-        
-        for (const email of messagesInConversation) {
-          if (email.needsFetchAttachments) {
-            try {
-              // Fetch attachment info
-              const attachmentsResponse = await axios.get(
-                `https://graph.microsoft.com/v1.0/me/messages/${email.id}/attachments`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                  }
-                }
-              );
-              
-              // Add attachment info to email
-              email.attachments = attachmentsResponse.data.value;
-              delete email.needsFetchAttachments;
-            } catch (attachmentError) {
-              console.error(`Error fetching attachments for email ${email.id}:`, attachmentError.message);
-              email.attachments = [];
-              delete email.needsFetchAttachments;
-            }
-          }
-        }
+        throw dbError;
       }
-      
+
+      if (!dbMessages) {
+        return res.status(200).json([]); // No messages found
+      }
+
+      console.log(`[EmailCtrl] Fetched ${dbMessages.length} messages from DB for desk ${deskId}`);
+
+      const conversationMap = {};
+      dbMessages.forEach(msg => {
+        const conversationId = msg.microsoft_conversation_id;
+        if (!conversationId) return; // Skip messages without a conversation ID
+
+        if (!conversationMap[conversationId]) {
+          conversationMap[conversationId] = [];
+        }
+        conversationMap[conversationId].push(msg);
+      });
+
+      const conversations = [];
       Object.keys(conversationMap).forEach(conversationId => {
-        const messagesInConversation = conversationMap[conversationId];
-        // Use the latest message as the conversation representative
+        const messagesInConversation = conversationMap[conversationId].sort((a, b) => {
+          const dateA = new Date(a.direction === 'incoming' ? a.received_at : a.sent_at);
+          const dateB = new Date(b.direction === 'incoming' ? b.received_at : b.sent_at);
+          return dateA - dateB; // Sort messages chronologically within conversation
+        });
+
+        if (messagesInConversation.length === 0) return;
+
         const latestMessage = messagesInConversation[messagesInConversation.length - 1];
         const firstMessage = messagesInConversation[0];
+
+        // Determine if the conversation has unread messages (incoming and not marked as read on server)
+        const hasUnread = messagesInConversation.some(
+          m => m.direction === 'incoming' && m.is_read_on_server === false
+        );
         
-        // Check if any message in the conversation is unread
-        const hasUnread = messagesInConversation.some(msg => !msg.isRead);
-        
+        const conversationTimestamp = latestMessage.direction === 'incoming' ? latestMessage.received_at : latestMessage.sent_at;
+
         conversations.push({
-          id: conversationId,
+          id: conversationId, // This is the microsoft_conversation_id
           subject: latestMessage.subject,
-          preview: latestMessage.bodyPreview || 'No preview available',
-          fromName: latestMessage.from?.emailAddress?.name || latestMessage.from?.emailAddress?.address,
-          receivedDateTime: latestMessage.receivedDateTime,
+          preview: latestMessage.body_preview || 'No preview available',
+          fromName: latestMessage.from_name || latestMessage.from_address,
+          receivedDateTime: conversationTimestamp, // Timestamp of the latest message in conversation
           hasUnread: hasUnread,
           messageCount: messagesInConversation.length,
-          messages: messagesInConversation.map(msg => ({
-            id: msg.id,
-            subject: msg.subject,
-            bodyPreview: msg.bodyPreview,
-            body: msg.body,
-            from: msg.from,
-            fromName: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address,
-            receivedDateTime: msg.receivedDateTime,
-            isRead: msg.isRead
+          messages: messagesInConversation.map(m => ({
+            id: m.microsoft_message_id || m.id, // Prefer Microsoft ID, fallback to local DB ID
+            subject: m.subject,
+            bodyPreview: m.body_preview,
+            body: { // Construct body object similar to Graph API
+              contentType: m.body_html ? 'HTML' : 'Text',
+              content: m.body_html || m.body_text || ''
+            },
+            from: {
+                emailAddress: {
+                    name: m.from_name,
+                    address: m.from_address
+                }
+            },
+            fromName: m.from_name || m.from_address, // For quick display
+            toRecipients: m.to_recipients, // Already an array of objects
+            ccRecipients: m.cc_recipients,
+            bccRecipients: m.bcc_recipients,
+            receivedDateTime: m.direction === 'incoming' ? m.received_at : m.sent_at,
+            sentDateTime: m.direction === 'outgoing' ? m.sent_at : null,
+            isRead: m.direction === 'incoming' ? m.is_read_on_server : true, // Outgoing are 'read'
+            direction: m.direction,
+            hasAttachments: m.has_attachments,
+            importance: m.importance,
+            // attachments: m.attachments_metadata, // If we store attachment metadata separately
           })),
-          latestMessageId: latestMessage.id,
-          firstMessageId: firstMessage.id
+          latestMessageId: latestMessage.microsoft_message_id || latestMessage.id,
+          firstMessageId: firstMessage.microsoft_message_id || firstMessage.id,
         });
       });
+
+      // Sort conversations by the timestamp of their latest message, most recent first
+      conversations.sort((a, b) => new Date(b.receivedDateTime) - new Date(a.receivedDateTime));
       
-      // Sort conversations by the date of their latest message
-      conversations.sort((a, b) => {
-        return new Date(b.receivedDateTime) - new Date(a.receivedDateTime);
-      });
-      
+      // TODO: Implement proper pagination for conversations if MESSAGE_FETCH_LIMIT is hit often
+      // For now, we return all conversations formed from the fetched messages.
       return res.status(200).json(conversations);
-    } catch (apiError) {
-      console.error('Error calling Microsoft Graph API:', apiError.message);
-      if (apiError.response) {
-        console.error('API response status:', apiError.response.status);
-        console.error('API response data:', apiError.response.data);
-      }
-      throw apiError;
+
+    } catch (dbQueryError) {
+      console.error('[EmailCtrl] Error processing messages from DB:', dbQueryError.message, dbQueryError.stack);
+      return res.status(500).json({ message: dbQueryError.message || 'Error processing emails from database' });
     }
   } catch (error) {
     console.error('Error fetching emails:', error);
@@ -646,7 +822,7 @@ exports.fetchUnreadEmails = async (req, res) => {
     console.log('Fetching unread emails for desk:', deskId);
     
     // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(deskId);
+    const accessToken = await getMicrosoftAccessToken(deskId);
     console.log('Access token retrieved successfully');
     
     // Fetch unread emails from Microsoft Graph API
@@ -784,7 +960,7 @@ exports.markAsRead = async (req, res) => {
     console.log(`Marking email ${emailId} as read for desk ${deskId}`);
     
     // Get access token for Microsoft Graph API
-    const accessToken = await exports.getMicrosoftAccessToken(deskId);
+    const accessToken = await getMicrosoftAccessToken(deskId);
     
     // Mark email as read using Microsoft Graph API
     await axios.patch(

@@ -29,6 +29,9 @@ router.post('/:emailId/reply', upload.array('attachments'), emailController.repl
 // Mark email as read
 router.post('/mark-read/:emailId', emailController.markAsRead);
 
+// Resolve a ticket with feedback options
+router.post('/:emailId/resolve', emailController.resolveTicket);
+
 // Get attachment for an email
 router.get('/:emailId/attachments/:attachmentId', emailController.getAttachment);
 
