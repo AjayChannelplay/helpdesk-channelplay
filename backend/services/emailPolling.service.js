@@ -4,7 +4,7 @@ const Message = require('../models/message.model');
 // TODO: Refactor getMicrosoftAccessToken into a shared utility to avoid potential circular dependencies
 const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
 
-const POLLING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes, adjust as needed
+const POLLING_INTERVAL_MS = 30 * 1000; // 30 seconds
 let pollingTimeoutId = null;
 
 async function fetchAndProcessEmailsForDesk(deskIntegration) {

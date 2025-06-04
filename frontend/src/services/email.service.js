@@ -183,7 +183,7 @@ const EmailService = {
         content += `<p>You selected: ${feedbackType}</p>`;
       }
       
-      const response = await axios.post(`${API_URL}/emails/${emailId}/reply`, {
+      const response = await axios.post(`${API_URL}/emails/${emailId}/resolve`, {
         content,
         deskId,
         subject: 'Ticket Resolved - Feedback Request'
@@ -198,15 +198,20 @@ const EmailService = {
     }
   },
   
-  // Fetch emails
-  fetchEmails: async (deskId) => {
+  // Fetch emails by status (e.g., 'open', 'closed')
+  fetchEmails: async (deskId, status = 'open') => { // Added status parameter, defaults to 'open'
     try {
-      const response = await axios.get(`${API_URL}/emails/fetch/${deskId}`, {
+      const response = await axios.get(`${API_URL}/emails`, { // Corrected endpoint path
+        params: { // Pass desk_id and status as query parameters
+          desk_id: deskId, 
+          status: status
+        },
         headers: AuthService.getAuthHeader()
       });
       
       return response.data;
     } catch (error) {
+      console.error(`Error fetching emails with status ${status} for desk ${deskId}:`, error);
       throw error.response ? error.response.data : error.message;
     }
   }

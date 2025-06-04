@@ -324,80 +324,40 @@ exports.resolveTicket = async (req, res) => {
       }
     );
     
-    // Wait a moment for the resolution email to be processed by Microsoft Graph API
-    console.log(`Waiting briefly for the resolution email to be processed...`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Now update message statuses in the database, AFTER sending the resolution email
-    // This ensures the feedback/resolution email is also included in database fetch operations
+    // Update message statuses in the database
     try {
-      if (!originalMessage.conversationId) {
-        console.warn(`Cannot update conversation messages: conversationId is missing for email ${emailId}. Using only the specific message ID for updates.`);
-        
-        // If no conversationId, at least update the specific message
-        const { error: singleMessageError } = await supabase
-          .from('messages')
-          .update({ status: 'closed' })
-          .eq('microsoft_message_id', emailId);
+      console.log(`Attempting to mark messages as closed for email ID: ${emailId} and conversation ID: ${originalMessage.conversationId}`);
 
-        if (singleMessageError) {
-          console.error(`Error updating status for specific message ${emailId}:`, singleMessageError);
-          // If there's a Supabase API key error, log it clearly
-          if (singleMessageError.message?.includes('Invalid API key')) {
-            console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-          }
-        } else {
-          console.log(`Successfully updated status to closed for message ${emailId}`);
-        }
-        
-        return res.status(200).json({ message: 'Ticket resolved successfully but conversation update was limited.' });
-      }
-      
-      console.log(`Attempting to fetch ALL messages for conversation ID: ${originalMessage.conversationId}`);
-      
-      // First, fetch all messages for this conversation to confirm what needs updating
-      const { data: allConversationMessages, error: fetchError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('microsoft_conversation_id', originalMessage.conversationId);
-
-      if (fetchError) {
-        console.error(`Error fetching messages for conversation ${originalMessage.conversationId}:`, fetchError);
-        // Check for API key errors
-        if (fetchError.message?.includes('Invalid API key')) {
-          console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-        }
-      } else {
-        console.log(`Found ${allConversationMessages?.length || 0} messages in conversation to update`);
-      }
-      
-      // Now update ALL messages in this conversation
-      console.log(`Updating status to 'closed' for ALL messages in conversation: ${originalMessage.conversationId}`);
-      const { data: updateData, error: conversationMessagesError } = await supabase
+      // 1. Update the specific message that was resolved
+      const { error: singleMessageError } = await supabase
         .from('messages')
         .update({ status: 'closed' })
-        .eq('microsoft_conversation_id', originalMessage.conversationId)
-        .select(); // Get back the updated records
+        .eq('microsoft_message_id', emailId);
 
-      if (conversationMessagesError) {
-        console.error(`Error updating status for conversation ${originalMessage.conversationId}:`, conversationMessagesError);
-        // Check for API key errors again
-        if (conversationMessagesError.message?.includes('Invalid API key')) {
-          console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-        }
-        return res.status(500).json({ message: 'Error updating message statuses', error: conversationMessagesError });
+      if (singleMessageError) {
+        console.error(`Error updating status for specific message ${emailId}:`, singleMessageError);
       } else {
-        const updatedCount = updateData?.length || 0;
-        console.log(`Successfully updated status to 'closed' for ${updatedCount} messages in conversation ${originalMessage.conversationId}`);
-        
-        // If no records were updated, this is suspicious - log it
-        if (updatedCount === 0) {
-          console.warn(`WARNING: No messages were updated to 'closed' status, even though we found ${allConversationMessages?.length || 0} messages in this conversation. Check if all messages were already closed or if there's a database connectivity issue.`);
-        }
+        console.log(`Successfully updated status to closed for message ${emailId}`);
       }
+
+      // 2. Update all messages in the same conversation
+      if (originalMessage.conversationId) {
+        const { error: conversationMessagesError } = await supabase
+          .from('messages')
+          .update({ status: 'closed' })
+          .eq('microsoft_conversation_id', originalMessage.conversationId);
+
+        if (conversationMessagesError) {
+          console.error(`Error updating status for messages in conversation ${originalMessage.conversationId}:`, conversationMessagesError);
+        } else {
+          console.log(`Successfully updated status to closed for all messages in conversation ${originalMessage.conversationId}`);
+        }
+      } else {
+        console.warn(`Cannot update conversation messages: conversationId is missing for email ${emailId}. This might happen if the original email details could not be fetched.`);
+      }
+
     } catch (dbError) {
       console.error('General error during database operations for message status update:', dbError);
-      return res.status(500).json({ message: 'Error updating message statuses', error: dbError.message || 'Unknown error' });
     }
     
     // Log the outgoing resolution email to our database
@@ -429,7 +389,6 @@ exports.resolveTicket = async (req, res) => {
         has_attachments: false,
         importance: originalMessage.importance,
         is_internal: false,
-        status: 'closed' // Explicitly mark the feedback email as closed right from creation
       };
 
       await Message.logMessage(messageDataForDb);
@@ -440,62 +399,6 @@ exports.resolveTicket = async (req, res) => {
       // Do not fail the operation if DB logging fails
     }
     
-    // Before sending the final response, perform one more database update with a longer delay
-    // This will catch any new messages (like the feedback email) that arrived during our processing
-    try {
-      console.log(`Setting up final conversation update in 5 seconds to catch feedback email...`);
-      
-      // Schedule a delayed update with higher timeout to catch any new messages in this conversation
-      setTimeout(async () => {
-        try {
-          if (!originalMessage.conversationId) {
-            console.log('No conversation ID available for final update, skipping.');
-            return;
-          }
-
-          console.log(`Executing final update for conversation ${originalMessage.conversationId} to catch feedback email...`);
-          
-          // Final update to catch the feedback email that might have arrived after the initial updates
-          const { data: finalUpdateData, error: finalUpdateError } = await supabase
-            .from('messages')
-            .update({ status: 'closed' })
-            .eq('microsoft_conversation_id', originalMessage.conversationId)
-            .select();
-            
-          if (finalUpdateError) {
-            console.error('Final update error:', finalUpdateError);
-            if (finalUpdateError.message?.includes('Invalid API key')) {
-              console.error('CRITICAL ERROR: Supabase Invalid API key detected in final update.');
-            }
-          } else {
-            const updatedCount = finalUpdateData?.length || 0;
-            console.log(`Final update complete - updated ${updatedCount} messages to 'closed'.`);
-            
-            // Quick verification check to see if any messages in this conversation are still 'open'
-            const { data: openMsgs, error: checkError } = await supabase
-              .from('messages')
-              .select('microsoft_message_id')
-              .eq('microsoft_conversation_id', originalMessage.conversationId)
-              .eq('status', 'open');
-              
-            if (checkError) {
-              console.error('Error checking for remaining open messages:', checkError);
-            } else if (openMsgs && openMsgs.length > 0) {
-              console.warn(`ALERT: ${openMsgs.length} messages in this conversation are still marked as 'open' after final update.`);
-              console.warn('Message IDs still open:', openMsgs.map(m => m.microsoft_message_id).join(', '));
-            } else {
-              console.log('Success! All messages in this conversation are now closed.');
-            }
-          }
-        } catch (finalError) {
-          console.error('Error in final conversation update:', finalError);
-        }
-      }, 5000); // 5 second delay to ensure feedback email is received and stored
-      
-    } catch (finalError) {
-      console.error('Error setting up final update:', finalError);
-    }
-
     return res.status(200).json({ message: 'Ticket resolved and resolution email sent successfully' });
   } catch (error) {
     console.error('Error resolving ticket:', error);
@@ -787,55 +690,87 @@ exports.fetchEmails = async (req, res) => {
   // TODO: Implement robust pagination for conversations
   // For now, fetches recent messages and forms conversations. Client might need to handle 'load more'.
   const PAGE_LIMIT = 20; // Number of conversations per page (approximate)
-  const MESSAGE_FETCH_LIMIT = 100; // Number of recent messages to fetch to build conversations
+  const MESSAGE_FETCH_LIMIT = 500; // Number of recent messages to fetch to build conversations
+  
   try {
     // Check for both parameter formats (deskId and desk_id) for better compatibility
     const deskId = req.query.deskId || req.query.desk_id;
-    // Get status filter - either 'open' or 'closed' (default to 'open')
-    const statusFilter = req.query.status || 'open';
-    
-    console.log(`Received request for ${statusFilter} emails with conversation view. Query params:`, req.query);
-    
     if (!deskId) {
       return res.status(400).json({ message: 'Desk ID is required' });
     }
     
-    console.log(`Fetching ${statusFilter} emails for desk:`, deskId);
+    // Get status filter - either 'open' or 'closed' (default to 'open')
+    const statusFilter = req.query.status || 'open';
     
-    // Fetch messages from local DB
-    try {
-      // Build query with status filter
-      const { data: dbMessages, error: dbError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('desk_id', deskId)
-        .eq('status', statusFilter) // Filter by open or closed status
-        .order('received_at', { ascending: false }) // Get most recent messages first
-        .limit(MESSAGE_FETCH_LIMIT);
-
-      if (dbError) {
-        console.error('[EmailCtrl] Error fetching messages from DB:', dbError.message);
-        // If this is due to the Supabase API key issue, this will fail.
-        if (dbError.message.includes('Invalid API key')) {
-          console.error("[EmailCtrl] CRITICAL: Supabase API key is invalid. Cannot fetch messages.");
-        }
-        throw dbError;
+    console.log(`[EmailCtrl] Fetching emails with status '${statusFilter}' for desk ${deskId}`);
+    
+    // Step 1: First find all conversation IDs that have at least one message matching the status filter
+    const { data: relevantConversations, error: convError } = await supabase
+      .from('messages')
+      .select('microsoft_conversation_id')
+      .eq('desk_id', deskId)
+      .eq('status', statusFilter) // Filter by requested status
+      .not('microsoft_conversation_id', 'is', null) // Ensure we have conversation IDs
+      .order('received_at', { ascending: false });
+    
+    if (convError) {
+      console.error('[EmailCtrl] Error finding relevant conversations:', convError.message);
+      if (convError.message.includes('Invalid API key')) {
+        console.error("[EmailCtrl] CRITICAL: Supabase API key is invalid. Cannot fetch messages.");
       }
-
-      if (!dbMessages) {
-        return res.status(200).json([]); // No messages found
+      throw convError;
+    }
+    
+    if (!relevantConversations || relevantConversations.length === 0) {
+      console.log(`[EmailCtrl] No conversations found with status '${statusFilter}' for desk ${deskId}`);
+      return res.status(200).json([]);
+    }
+    
+    // Extract unique conversation IDs
+    const uniqueConversationIds = [...new Set(relevantConversations
+      .map(item => item.microsoft_conversation_id)
+      .filter(id => id !== null && id !== undefined))];
+    
+    console.log(`[EmailCtrl] Found ${uniqueConversationIds.length} unique conversations with status '${statusFilter}'`);
+    
+    // Step 2: Now fetch ALL messages from these conversations (regardless of status)
+    // This ensures we get complete conversation threads
+    const { data: allMessages, error: msgError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('desk_id', deskId)
+      .in('microsoft_conversation_id', uniqueConversationIds)
+      .order('received_at', { ascending: false })
+      .limit(MESSAGE_FETCH_LIMIT);
+    
+    if (msgError) {
+      console.error('[EmailCtrl] Error fetching all messages for conversations:', msgError.message);
+      if (msgError.message.includes('Invalid API key')) {
+        console.error("[EmailCtrl] CRITICAL: Supabase API key is invalid.");
       }
+      throw msgError;
+    }
+    
+    if (!allMessages || allMessages.length === 0) {
+      console.log(`[EmailCtrl] No messages found for the ${uniqueConversationIds.length} conversations`);
+      return res.status(200).json([]);
+    }
+    
+    console.log(`[EmailCtrl] Fetched ${allMessages.length} total messages for ${uniqueConversationIds.length} conversations`);
+    
+    // Step 3: Group messages by conversation ID
+    const conversationMap = {};
+    
+    allMessages.forEach(msg => {
+      const conversationId = msg.microsoft_conversation_id;
+      if (!conversationId) return; // Skip messages without a conversation ID
+      
+      if (!conversationMap[conversationId]) {
+        conversationMap[conversationId] = [];
+      }
+      conversationMap[conversationId].push(msg);
+    });
 
-      console.log(`[EmailCtrl] Fetched ${dbMessages.length} messages from DB for desk ${deskId}`);
-
-      const conversationMap = {};
-      dbMessages.forEach(msg => {
-        const conversationId = msg.microsoft_conversation_id;
-        if (!conversationId) return; // Skip messages without a conversation ID
-
-        if (!conversationMap[conversationId]) {
-          conversationMap[conversationId] = [];
-        }
         conversationMap[conversationId].push(msg);
       });
 

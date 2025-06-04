@@ -70,17 +70,6 @@ const TicketsPage = () => {
         console.log('[TicketsPage] Initial userInfo from localStorage:', user);
         setUserInfo(user);
       }
-      
-      // Load resolved emails from localStorage
-      try {
-        const storedResolvedEmails = JSON.parse(localStorage.getItem('resolvedEmails') || '[]');
-        console.log('[TicketsPage] Loaded resolved emails from localStorage:', storedResolvedEmails);
-        setResolvedEmails(storedResolvedEmails);
-      } catch (e) {
-        console.error('Error loading resolved emails from localStorage:', e);
-        // If there's an error, initialize with empty array
-        setResolvedEmails([]);
-      }
     } catch (err) {
       console.error('Error getting user info:', err);
     }
@@ -221,11 +210,16 @@ const TicketsPage = () => {
     if (selectedDeskId) {
       setLoading(true); // Indicate loading for the new desk's data
       fetchTickets();
+      
+      // Fetch open emails based on view preference
       if (showAllEmails) {
-        fetchAllEmails();
+        fetchAllEmails(); // Loads emails with status='open'
       } else {
-        fetchUnreadEmails();
+        fetchUnreadEmails(); // Loads unread emails
       }
+      
+      // Always fetch closed emails for the resolved/closed section
+      fetchClosedEmails(); // Loads emails with status='closed'
     } else {
       setLoading(false); // No desk selected, nothing to load
     }
@@ -281,44 +275,78 @@ const TicketsPage = () => {
     }
   };
   
-  // Fetch all emails (both read and unread) with conversation history
+  // Fetch all open emails with status='open'
   const fetchAllEmails = async () => {
     try {
       setRefreshing(true);
       if (!selectedDeskId) {
-        console.log('No desk selected, skipping all emails fetch');
+        console.log('No desk selected, skipping open emails fetch');
         setAllEmails([]);
         setRefreshing(false);
         return;
       }
       
-      console.log('Fetching all emails for desk:', selectedDeskId);
-      const response = await EmailService.fetchAllEmails(selectedDeskId);
-      console.log('All emails response:', response);
+      console.log('Fetching open emails for desk:', selectedDeskId);
+      
+      // Use the enhanced fetchEmails method with status='open'
+      const response = await EmailService.fetchEmails(selectedDeskId, 'open');
+      console.log('Open emails response:', response);
       
       // Handle both response formats for backward compatibility
       const conversations = Array.isArray(response) ? response : 
                            (response.data && Array.isArray(response.data)) ? response.data : [];
       
-      console.log('Processed conversations:', conversations.length);
+      console.log('Processed open conversations:', conversations.length);
       setAllEmails(conversations);
       setRefreshing(false);
     } catch (err) {
-      console.error('Error fetching all emails:', err);
+      console.error('Error fetching open emails:', err);
       setAllEmails([]);
       setRefreshing(false);
-      setError('Failed to load all emails. Please try again.');
+      setError('Failed to load open emails. Please try again.');
+    }
+  };
+  
+  // Fetch closed emails with status='closed'
+  const fetchClosedEmails = async () => {
+    try {
+      if (!selectedDeskId) {
+        console.log('No desk selected, skipping closed emails fetch');
+        setResolvedEmails([]);
+        return;
+      }
+      
+      console.log('Fetching closed emails for desk:', selectedDeskId);
+      
+      // Use the enhanced fetchEmails method with status='closed'
+      const response = await EmailService.fetchEmails(selectedDeskId, 'closed');
+      console.log('Closed emails response:', response);
+      
+      // Handle both response formats for backward compatibility
+      const closedConversations = Array.isArray(response) ? response : 
+                                 (response.data && Array.isArray(response.data)) ? response.data : [];
+      
+      console.log('Processed closed conversations:', closedConversations.length);
+      setResolvedEmails(closedConversations);
+    } catch (err) {
+      console.error('Error fetching closed emails:', err);
+      setError('Failed to load closed emails. Please try again.');
     }
   };
   
   // Handle refresh button click
   const handleRefresh = () => {
     fetchTickets();
+    
+    // Fetch open emails based on view preference
     if (showAllEmails) {
-      fetchAllEmails();
+      fetchAllEmails(); // Loads emails with status='open'
     } else {
-      fetchUnreadEmails();
+      fetchUnreadEmails(); // Loads unread emails
     }
+    
+    // Always refresh closed emails too
+    fetchClosedEmails(); // Loads emails with status='closed'
   };
   
   // Load conversation when ticket is selected
@@ -512,41 +540,59 @@ const TicketsPage = () => {
       setSending(true);
       setError(null); // Clear any previous errors
       
+      // Store the conversation ID before resolution to properly track the thread
+      let conversationId = null;
+      if (selectedTicket && selectedTicket.conversationId) {
+        conversationId = selectedTicket.conversationId;
+        console.log(`Resolving ticket in conversation: ${conversationId}`);
+      } else {
+        // Try to find the conversation ID from all emails
+        const emailToResolve = allEmails.find(email => 
+          email.messages && email.messages.some(msg => msg.id === emailId));
+        if (emailToResolve) {
+          conversationId = emailToResolve.id;
+          console.log(`Found conversation ID from emails list: ${conversationId}`);
+        }
+      }
+      
+      // Send the resolution email
       const response = await EmailService.sendResolutionEmail(emailId, selectedDeskId);
       console.log('Resolution email response:', response);
       
-      // Find the email in allEmails that matches this emailId
-      const emailToResolve = allEmails.find(email => {
-        // Check if it's a direct match on ID
-        if (email.id === emailId) return true;
-        // Or if it's a conversation with this message
-        if (email.latestMessageId === emailId) return true;
-        return false;
-      });
+      // After successful resolution, wait a moment for database updates to complete
+      console.log('Waiting for database updates to complete...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
-      if (emailToResolve) {
-        // Add the resolved email to the resolved list
-        setResolvedEmails(prev => [...prev, {
-          ...emailToResolve,
-          resolvedAt: new Date().toISOString()
-        }]);
+      // After delay, re-fetch emails from the backend
+      console.log('Re-fetching emails after resolution...');
+      
+      try {
+        // Fetch closed emails FIRST - this is important for proper UI update
+        const closedEmailsResponse = await EmailService.fetchEmails(selectedDeskId, 'closed');
+        console.log('Fetched closed emails:', closedEmailsResponse);
         
-        // Store in localStorage to persist resolved status
-        const storedResolvedEmails = JSON.parse(localStorage.getItem('resolvedEmails') || '[]');
-        localStorage.setItem('resolvedEmails', JSON.stringify([
-          ...storedResolvedEmails,
-          {
-            id: emailToResolve.id,
-            resolvedAt: new Date().toISOString()
-          }
-        ]));
+        // Important: check if the resolved thread is now in closed emails
+        if (conversationId) {
+          const threadInClosedEmails = closedEmailsResponse.some(email => email.id === conversationId);
+          console.log(`Is conversation ${conversationId} now in closed emails? ${threadInClosedEmails}`);
+        }
+        
+        // Update resolved emails list with data from backend
+        setResolvedEmails(closedEmailsResponse);
+        
+        // Fetch open emails (using the new status parameter)
+        const openEmailsResponse = await EmailService.fetchEmails(selectedDeskId, 'open');
+        console.log('Fetched open emails:', openEmailsResponse);
+        
+        // Update the UI with fresh data from the backend
+        setAllEmails(openEmailsResponse);
+        setUnreadEmails(openEmailsResponse.filter(email => !email.isRead));
+      } catch (fetchError) {
+        console.error('Error re-fetching emails after resolution:', fetchError);
       }
       
-      // Remove the email from unread emails list
-      setUnreadEmails(unreadEmails.filter(email => email.id !== emailId));
-      
       // Show success message
-      setSuccess('Resolution email sent successfully!');
+      setSuccess('Email resolved successfully!');
       setTimeout(() => setSuccess(null), 3000);
       
       setSending(false);
@@ -708,17 +754,8 @@ const TicketsPage = () => {
                               }
                             </small>
                           </div>
-                          {allEmails
-                            .filter(email => {
-                              // Check if this email is in the resolvedEmails list
-                              const isResolved = resolvedEmails.some(resolved => 
-                                resolved.id === email.id || resolved.id === email.latestMessageId
-                              );
-                              
-                              // For 'open' filter, show emails that are NOT resolved
-                              // For 'closed' filter, show emails that ARE resolved
-                              return emailStatusFilter === 'open' ? !isResolved : isResolved;
-                            })
+                          {/* For Open emails, show from allEmails, for Closed emails show from resolvedEmails */}
+                          {(emailStatusFilter === 'open' ? allEmails : resolvedEmails)
                             .map(conversation => (
                             <div 
                               key={conversation.id} 
