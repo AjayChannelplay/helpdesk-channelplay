@@ -99,7 +99,7 @@ exports.replyToEmail = async (req, res) => {
     const accessToken = await getMicrosoftAccessToken(desk_id);
     
     // Format CC recipients for Microsoft Graph API
-    const formattedCcRecipients = cc_recipients.map(email => ({
+    const manualCcRecipients = cc_recipients.map(email => ({
       emailAddress: { address: email }
     }));
     
@@ -126,6 +126,36 @@ exports.replyToEmail = async (req, res) => {
     // console.log('Original CcRecipients:', JSON.stringify(originalMessage.ccRecipients, null, 2));
 
     const calculatedReplyToRecipients = originalMessage.from ? [originalMessage.from] : (originalMessage.sender ? [originalMessage.sender] : []);
+    
+    // Get original CC recipients from the message being replied to
+    const originalCcRecipients = originalMessage.ccRecipients || [];
+    console.log('Original CC Recipients:', JSON.stringify(originalCcRecipients, null, 2));
+    
+    // Combine original CC recipients with manually added ones
+    // First, create a Set of email addresses to avoid duplicates
+    const ccEmailSet = new Set();
+    
+    // Add manual CC recipients first
+    manualCcRecipients.forEach(recipient => {
+      ccEmailSet.add(recipient.emailAddress.address.toLowerCase());
+    });
+    
+    // Create the combined CC recipients array
+    const formattedCcRecipients = [...manualCcRecipients];
+    
+    // Add original CC recipients if they're not already included
+    originalCcRecipients.forEach(recipient => {
+      const emailAddress = recipient.emailAddress?.address;
+      if (emailAddress && !ccEmailSet.has(emailAddress.toLowerCase())) {
+        ccEmailSet.add(emailAddress.toLowerCase());
+        formattedCcRecipients.push({
+          emailAddress: {
+            address: emailAddress,
+            name: recipient.emailAddress.name || ''
+          }
+        });
+      }
+    });
     
     console.log('Calculated To-Recipients for this reply:', JSON.stringify(calculatedReplyToRecipients, null, 2));
     console.log('Calculated CC-Recipients for this reply (from form + original thread):', JSON.stringify(formattedCcRecipients, null, 2));
