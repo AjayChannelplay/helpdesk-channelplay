@@ -38,6 +38,10 @@ const TicketsPage = () => {
   const [conversation, setConversation] = useState([]);
   const [replyText, setReplyText] = useState('');
   
+  // Auto-refresh settings
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [refreshInterval, setRefreshInterval] = useState(30); // seconds
+  
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -204,227 +208,397 @@ const TicketsPage = () => {
 
   // Effect for when selectedDeskId changes - fetch tickets and emails
   useEffect(() => {
-    // Reset states when selectedDeskId changes or becomes null to clear previous desk's data
-    console.log('[TicketsPage] selectedDeskId changed to:', selectedDeskId, "Resetting ticket states."); // DEBUG LOG
+    console.log('Selected desk changed to:', selectedDeskId);
     setTickets([]);
     setSelectedTicket(null);
     setConversation([]);
-    // setError(null); // Clear general errors, or handle more specifically
-    // setSuccess(null);
-
-    if (selectedDeskId) {
-      setLoading(true); // Indicate loading for the new desk's data
-      fetchTickets();
-      
-      // Fetch open emails based on view preference
-      if (showAllEmails) {
-        fetchAllEmails(); // Loads emails with status='open'
-      } else {
-        fetchUnreadEmails(); // Loads unread emails
-      }
-      
-      // Always fetch closed emails for the resolved/closed section
-      fetchClosedEmails(); // Loads emails with status='closed'
-    } else {
-      setLoading(false); // No desk selected, nothing to load
-    }
-  }, [selectedDeskId, showAllEmails]);
-  
-  // Fetch tickets
-  const fetchTickets = async () => {
-    if (!selectedDeskId) {
-      setTickets([]);
-      setLoading(false); // Ensure loading is false if no desk is selected
-      // setError('No desk selected or you do not have access to any desks.'); // Optional: provide a message
-      return;
-    }
-    try {
-      setLoading(true);
-      const response = await TicketService.getTickets({ deskId: selectedDeskId });
-      setTickets(response.data || []);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching tickets:', err);
-      setError('Failed to load tickets. ' + (err.response?.data?.message || 'Please try again.'));
-      setTickets([]);
-      setLoading(false);
-    }
-  };
-  
-  // Fetch unread emails
-  const fetchUnreadEmails = async () => {
-    try {
-      setRefreshing(true);
-      if (!selectedDeskId) {
-        console.log('No desk selected, skipping unread emails fetch');
-        setUnreadEmails([]);
-        setRefreshing(false);
-        return;
-      }
-      
-      console.log('Fetching unread emails for desk:', selectedDeskId);
-      const response = await EmailService.fetchUnreadEmails(selectedDeskId);
-      console.log('Unread emails response:', response);
-      
-      // Handle both response formats for backward compatibility
-      const emails = Array.isArray(response) ? response : 
-                    (response.data && Array.isArray(response.data)) ? response.data : [];
-      
-      setUnreadEmails(emails);
-      setRefreshing(false);
-    } catch (err) {
-      console.error('Error fetching unread emails:', err);
-      setUnreadEmails([]);
-      setRefreshing(false);
-      setError('Failed to load unread emails. Please try again.');
-    }
-  };
-  
-  // Fetch all open emails with status='open'
-  const fetchAllEmails = async () => {
-    try {
-      setRefreshing(true);
-      if (!selectedDeskId) {
-        console.log('No desk selected, skipping open emails fetch');
-        setAllEmails([]);
-        setRefreshing(false);
-        return;
-      }
-      
-      console.log('Fetching open emails for desk:', selectedDeskId);
-      
-      // Use the enhanced fetchEmails method with status='open'
-      const response = await EmailService.fetchEmails(selectedDeskId, 'open');
-      console.log('Open emails response:', response);
-      
-      // Handle both response formats for backward compatibility
-      const conversations = Array.isArray(response) ? response : 
-                           (response.data && Array.isArray(response.data)) ? response.data : [];
-      
-      console.log('Processed open conversations:', conversations.length);
-      setAllEmails(conversations);
-      setRefreshing(false);
-    } catch (err) {
-      console.error('Error fetching open emails:', err);
-      setAllEmails([]);
-      setRefreshing(false);
-      setError('Failed to load open emails. Please try again.');
-    }
-  };
-  
-  // Fetch closed emails with status='closed'
-  const fetchClosedEmails = async () => {
-    try {
-      if (!selectedDeskId) {
-        console.log('No desk selected, skipping closed emails fetch');
-        setResolvedEmails([]);
-        return;
-      }
-      
-      console.log('Fetching closed emails for desk:', selectedDeskId);
-      
-      // Use the enhanced fetchEmails method with status='closed'
-      const response = await EmailService.fetchEmails(selectedDeskId, 'closed');
-      console.log('Closed emails response:', response);
-      
-      // Handle both response formats for backward compatibility
-      const closedConversations = Array.isArray(response) ? response : 
-                                 (response.data && Array.isArray(response.data)) ? response.data : [];
-      
-      console.log('Processed closed conversations:', closedConversations);
-      console.log('Closed conversations count:', closedConversations.length);
-      
-      setResolvedEmails(closedConversations);
-    } catch (err) {
-      console.error('Error fetching closed emails:', err);
-      setError('Failed to load closed emails. Please try again.');
-    }
-  };
-  
-  // Handle refresh button click
-  const handleRefresh = () => {
-    fetchTickets();
     
-    // Fetch open emails based on view preference
-    if (showAllEmails) {
-      fetchAllEmails(); // Loads emails with status='open'
-    } else {
-      fetchUnreadEmails(); // Loads unread emails
-    }
+    if (!selectedDeskId) return;
     
-    // Always refresh closed emails too
-    fetchClosedEmails(); // Loads emails with status='closed'
-  };
-  
-  // Load conversation when ticket is selected
-  useEffect(() => {
-    const loadConversation = async () => {
-      if (!selectedTicket) return;
-      
+    // Set a loading state to show spinner while initial load happens
+    setLoading(true);
+    
+    // Create a flag to track if component is still mounted
+    let isMounted = true;
+    
+    const loadInitialData = async () => {
       try {
-        setLoading(true);
-        setError(null); // Clear any previous errors
-        console.log('Selected ticket changed:', selectedTicket);
+        // Fetch tickets and emails in parallel
+        const promises = [];
         
-        // For email conversations, use the messages array that was already fetched
-        if (selectedTicket.id && selectedTicket.id.toString().startsWith('email-') && selectedTicket.messages) {
-          console.log('Using existing conversation messages:', selectedTicket.messages.length);
-          setConversation(selectedTicket.messages);
-        }
-        // For regular tickets, fetch conversation from server
-        else if (selectedTicket.id && !selectedTicket.id.toString().startsWith('email-')) {
-          const ticketId = selectedTicket.id;
-          console.log('Fetching conversation for ticket ID:', ticketId);
-          
-          const conversationData = await EmailService.fetchConversation(ticketId);
-          console.log('Conversation data received:', conversationData);
-          
-          // Ensure we have an array of conversation messages
-          if (conversationData) {
-            const messageArray = Array.isArray(conversationData) ? conversationData : 
-                              (conversationData.data ? conversationData.data : []);
-            
-            // Process messages to handle complex objects
-            const processedMessages = messageArray.map(message => {
-              // Handle complex from object from Microsoft Graph API
-              if (message.from && typeof message.from === 'object' && message.from.emailAddress) {
-                return {
-                  ...message,
-                  fromName: message.from.emailAddress.name || message.from.emailAddress.address
-                };
-              }
-              return message;
-            });
-            
-            setConversation(processedMessages);
-          } else {
-            setConversation([]);
-          }
+        // Fetch tickets
+        promises.push(
+          TicketService.getTickets(selectedDeskId)
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setTickets(data);
+              console.log('Initial tickets loaded:', data?.length || 0);
+            })
+            .catch(err => console.error('Error loading initial tickets:', err))
+        );
+        
+        // Fetch emails based on view preference
+        if (showAllEmails) {
+          promises.push(
+            EmailService.fetchEmails(selectedDeskId, 'open')
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) {
+                  setAllEmails(data);
+                  setUnreadEmails(data.filter(email => !email.isRead));
+                }
+                console.log('Initial all emails loaded:', data?.length || 0);
+              })
+              .catch(err => console.error('Error loading initial all emails:', err))
+          );
         } else {
-          // For individual email previews without conversation data
-          console.log('Email preview selected without messages array');
-          setConversation([]);
+          promises.push(
+            EmailService.fetchUnreadEmails(selectedDeskId)
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) setUnreadEmails(data);
+                console.log('Initial unread emails loaded:', data?.length || 0);
+              })
+              .catch(err => console.error('Error loading initial unread emails:', err))
+          );
         }
         
-        setLoading(false);
+        // Fetch closed emails
+        promises.push(
+          EmailService.fetchEmails(selectedDeskId, 'closed')
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setResolvedEmails(data);
+              console.log('Initial closed emails loaded:', data?.length || 0);
+            })
+            .catch(err => console.error('Error loading initial closed emails:', err))
+        );
         
-        // Scroll to bottom of conversation
-        setTimeout(() => {
-          if (messagesEndRef.current) {
-            console.log('Scrolling to bottom of conversation');
-            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-          }
-        }, 100);
+        // Wait for all requests to complete
+        await Promise.all(promises);
+        
+        if (isMounted) {
+          setLoading(false);
+        }
       } catch (err) {
-        console.error('Error fetching conversation:', err);
-        setConversation([]);
-        setLoading(false);
-        setError('Failed to load conversation. Please try again.');
+        console.error('Error in loadInitialData:', err);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
     
-    loadConversation();
-  }, [selectedTicket]);
+    loadInitialData();
+    
+    // Cleanup function
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDeskId, showAllEmails]);
+
+  // Fetch tickets
+  const fetchTickets = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const ticketsData = await TicketService.getTickets(selectedDeskId);
+      console.log('Tickets data:', ticketsData);
+      // Only update tickets if we received valid data
+      if (Array.isArray(ticketsData)) {
+        setTickets(ticketsData);
+      } else {
+        console.warn('Invalid tickets data received:', ticketsData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching tickets:', err);
+      setLoading(false);
+      // Keep previous tickets state on error
+    }
+  };
+
+  // Fetch unread emails based on desk ID
+  const fetchUnreadEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const unreadData = await EmailService.fetchUnreadEmails(selectedDeskId);
+      console.log('Unread emails data:', unreadData);
+      // Only update if we got valid data
+      if (Array.isArray(unreadData)) {
+        setUnreadEmails(unreadData);
+      } else {
+        console.warn('Invalid unread emails data received:', unreadData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching unread emails:', err);
+      setLoading(false);
+      // Keep previous unread emails state on error
+    }
+  };
+
+  // Fetch all emails based on desk ID
+  const fetchAllEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const emailsData = await EmailService.fetchEmails(selectedDeskId, 'open');
+      console.log('All emails data:', emailsData);
+      // Only update if we got valid data
+      if (Array.isArray(emailsData)) {
+        setAllEmails(emailsData);
+        // Also update unread emails in case they changed
+        setUnreadEmails(emailsData.filter(email => !email.isRead));
+      } else {
+        console.warn('Invalid emails data received:', emailsData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching all emails:', err);
+      setLoading(false);
+      // Keep previous emails state on error
+    }
+  };
+
+  // Fetch closed emails with status='closed'
+  const fetchClosedEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      const closedEmailsData = await EmailService.fetchEmails(selectedDeskId, 'closed');
+      console.log('Closed emails data:', closedEmailsData);
+      // Only update if we got valid data
+      if (Array.isArray(closedEmailsData)) {
+        setResolvedEmails(closedEmailsData);
+      } else {
+        console.warn('Invalid closed emails data received:', closedEmailsData);
+        // Keep previous state
+      }
+    } catch (err) {
+      console.error('Error fetching closed emails:', err);
+      // Keep previous resolved emails state on error
+    }
+  };
+
+  // Handle refresh button click
+  const handleRefresh = useCallback(() => {
+    console.log('[TicketsPage] Manual refresh triggered');
+    
+    // Show loading spinner for manual refresh
+    setLoading(true);
+    
+    // Create a flag to track if component is still mounted
+    let isMounted = true;
+    
+    const refreshAllData = async () => {
+      try {
+        // Fetch tickets and emails in parallel for better performance
+        const promises = [];
+        
+        // Fetch tickets
+        promises.push(
+          TicketService.getTickets(selectedDeskId)
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setTickets(data);
+              console.log('Tickets refreshed:', data?.length || 0);
+            })
+            .catch(err => console.error('Error refreshing tickets:', err))
+        );
+        
+        // Fetch emails based on view preference
+        if (showAllEmails) {
+          promises.push(
+            EmailService.fetchEmails(selectedDeskId, 'open')
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) {
+                  setAllEmails(data);
+                  setUnreadEmails(data.filter(email => !email.isRead));
+                }
+                console.log('All emails refreshed:', data?.length || 0);
+              })
+              .catch(err => console.error('Error refreshing all emails:', err))
+          );
+        } else {
+          promises.push(
+            EmailService.fetchUnreadEmails(selectedDeskId)
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) setUnreadEmails(data);
+                console.log('Unread emails refreshed:', data?.length || 0);
+              })
+              .catch(err => console.error('Error refreshing unread emails:', err))
+          );
+        }
+        
+        // Fetch closed emails
+        promises.push(
+          EmailService.fetchEmails(selectedDeskId, 'closed')
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setResolvedEmails(data);
+              console.log('Closed emails refreshed:', data?.length || 0);
+            })
+            .catch(err => console.error('Error refreshing closed emails:', err))
+        );
+        
+        // Wait for all requests to complete
+        await Promise.all(promises);
+        
+        if (isMounted) {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Error in refreshAllData:', err);
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+    
+    // Only proceed if we have a selected desk
+    if (selectedDeskId) {
+      refreshAllData();
+    } else {
+      setLoading(false);
+    }
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDeskId, showAllEmails]);
+
+  // Auto-refresh functionality for tickets and emails
+  useEffect(() => {
+    if (!autoRefreshEnabled || !selectedDeskId) return;
+    
+    console.log(`[TicketsPage] Setting up auto-refresh interval: ${refreshInterval} seconds`);
+    
+    // Initial load when component mounts or selectedDeskId changes is now done separately
+    // to avoid race conditions. Don't call handleRefresh() here as it might lead to state inconsistencies.
+    
+    // Set up interval for auto-refresh
+    const intervalId = setInterval(() => {
+      console.log('[TicketsPage] Auto-refresh triggered');
+      // Instead of handleRefresh(), call individual fetch functions to better handle errors
+      fetchTickets().catch(err => {
+        console.error('[Auto-refresh] Error refreshing tickets:', err);
+        // Don't update loading state or error state for auto-refresh errors
+      });
+      
+      // Fetch emails based on current view
+      if (showAllEmails) {
+        fetchAllEmails().catch(err => {
+          console.error('[Auto-refresh] Error refreshing all emails:', err);
+        });
+      } else {
+        fetchUnreadEmails().catch(err => {
+          console.error('[Auto-refresh] Error refreshing unread emails:', err);
+        });
+      }
+      
+      // Fetch closed emails too
+      fetchClosedEmails().catch(err => {
+        console.error('[Auto-refresh] Error refreshing closed emails:', err);
+      });
+    }, refreshInterval * 1000);
+    
+    // Clean up interval on component unmount
+    return () => {
+      console.log('[TicketsPage] Cleaning up auto-refresh interval');
+      clearInterval(intervalId);
+    };
+  }, [selectedDeskId, autoRefreshEnabled, refreshInterval, showAllEmails, fetchTickets, fetchAllEmails, fetchUnreadEmails, fetchClosedEmails]);
+
+  // Create a fetchConversationData function that can be called both initially and for auto-refresh
+  const fetchConversationData = useCallback(async (ticket) => {
+    if (!ticket) return;
+    
+    try {
+      setLoading(true);
+      setError(null); // Clear any previous errors
+      console.log('Fetching conversation data for ticket:', ticket.id);
+      
+      // For email conversations, use the messages array that was already fetched
+      if (ticket.id && ticket.id.toString().startsWith('email-') && ticket.messages) {
+        console.log('Using existing conversation messages:', ticket.messages.length);
+        setConversation(ticket.messages);
+      }
+      // For regular tickets, fetch conversation from server
+      else if (ticket.id && !ticket.id.toString().startsWith('email-')) {
+        const ticketId = ticket.id;
+        console.log('Fetching conversation for ticket ID:', ticketId);
+        
+        const conversationData = await EmailService.fetchConversation(ticketId);
+        console.log('Conversation data received:', conversationData);
+        
+        // Ensure we have an array of conversation messages
+        if (conversationData) {
+          const messageArray = Array.isArray(conversationData) ? conversationData : 
+                            (conversationData.data ? conversationData.data : []);
+          
+          // Process messages to handle complex objects
+          const processedMessages = messageArray.map(message => {
+            // Handle complex from object from Microsoft Graph API
+            if (message.from && typeof message.from === 'object' && message.from.emailAddress) {
+              return {
+                ...message,
+                fromName: message.from.emailAddress.name || message.from.emailAddress.address
+              };
+            }
+            return message;
+          });
+          
+          setConversation(processedMessages);
+        } else {
+          setConversation([]);
+        }
+      }
+      
+      setLoading(false);
+      
+      // Scroll to bottom of conversation automatically
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 300);
+    } catch (error) {
+      console.error('Error loading conversation:', error);
+      setError('Failed to load conversation. ' + (error.response?.data?.message || 'Please try again.'));
+      setLoading(false);
+    }
+  }, []);
+  
+  // Initial load of conversation when ticket is selected
+  useEffect(() => {
+    fetchConversationData(selectedTicket);
+  }, [selectedTicket, fetchConversationData]);
+  
+  // Auto-refresh for conversation
+  useEffect(() => {
+    if (!autoRefreshEnabled || !selectedTicket) return;
+    
+    console.log(`[TicketsPage] Setting up conversation auto-refresh: ${refreshInterval} seconds`);
+    
+    const intervalId = setInterval(() => {
+      console.log('[TicketsPage] Auto-refreshing conversation');
+      fetchConversationData(selectedTicket);
+    }, refreshInterval * 1000);
+    
+    return () => {
+      console.log('[TicketsPage] Cleaning up conversation auto-refresh');
+      clearInterval(intervalId);
+    };
+  }, [selectedTicket, autoRefreshEnabled, refreshInterval, fetchConversationData]);
 
   // Handle sending a reply to a ticket or email
   const handleSendReply = async () => {
@@ -503,7 +677,7 @@ const TicketsPage = () => {
         console.log('Attachments sent for ticket reply:', attachments.length > 0 ? attachments.map(file => file.name).join(', ') : 'None');
         
         // Refresh conversation
-        fetchConversation(selectedTicket.id);
+        fetchConversationData(selectedTicket);
         setReplyText('');
         setSuccess('Reply sent successfully!');
         setAttachments([]); // Clear attachments after successful send
@@ -629,7 +803,7 @@ const TicketsPage = () => {
       setError('Failed to update ticket status. ' + (err.response?.data?.message || 'Please try again.'));
     }
   };
-  
+
   return (
     <div className="tickets-container">
       <Row>
@@ -736,6 +910,14 @@ const TicketsPage = () => {
                                   isEmail: true,
                                   emailId: email.id
                                 };
+                                // Mark email as read when opened
+                                EmailService.markAsRead(email.id, selectedDeskId)
+                                  .then(() => {
+                                    console.log(`Marked email ${email.id} as read`);
+                                    // Update the unreadEmails list by removing this email
+                                    setUnreadEmails(prev => prev.filter(e => e.id !== email.id));
+                                  })
+                                  .catch(err => console.error('Error marking email as read:', err));
                                 setSelectedTicket(newTicket);
                               }}
                             >
@@ -801,6 +983,28 @@ const TicketsPage = () => {
                                   messages: conversation.messages,
                                   messageCount: conversation.messageCount || 1
                                 };
+                                // Mark conversation as read when opened if it has unread messages
+                                if (conversation.hasUnread) {
+                                  EmailService.markAsRead(conversation.latestMessageId, selectedDeskId)
+                                    .then(() => {
+                                      console.log(`Marked conversation ${conversation.id} as read`);
+                                      // Update the allEmails or resolvedEmails list to remove the unread marker
+                                      const updatedConversations = (emailStatusFilter === 'open' ? [...allEmails] : [...resolvedEmails])
+                                        .map(conv => {
+                                          if (conv.id === conversation.id) {
+                                            return {...conv, hasUnread: false};
+                                          }
+                                          return conv;
+                                        });
+                                      
+                                      if (emailStatusFilter === 'open') {
+                                        setAllEmails(updatedConversations);
+                                      } else {
+                                        setResolvedEmails(updatedConversations);
+                                      }
+                                    })
+                                    .catch(err => console.error('Error marking conversation as read:', err));
+                                }
                                 setSelectedTicket(newTicket);
                               }}
                             >
@@ -843,7 +1047,24 @@ const TicketsPage = () => {
                             <div 
                               key={ticket.id} 
                               className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
-                              onClick={() => setSelectedTicket(ticket)}
+                              onClick={() => {
+                                // For regular tickets, mark as read if status is 'new'
+                                if (ticket.status === 'new') {
+                                  TicketService.updateTicket(ticket.id, { status: 'open' })
+                                    .then(() => {
+                                      console.log(`Updated ticket ${ticket.id} status from new to open`);
+                                      // Update the local tickets array to reflect the status change
+                                      setTickets(prev => prev.map(t => {
+                                        if (t.id === ticket.id) {
+                                          return {...t, status: 'open'};
+                                        }
+                                        return t;
+                                      }));
+                                    })
+                                    .catch(err => console.error('Error updating ticket status:', err));
+                                }
+                                setSelectedTicket(ticket);
+                              }}
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{ticket.subject}</div>
@@ -947,6 +1168,15 @@ const TicketsPage = () => {
                     onClick={handleRefresh}
                   >
                     <FaSyncAlt className="me-1" /> Refresh
+                  </Button>
+                  
+                  <Button 
+                    variant={autoRefreshEnabled ? "outline-success" : "outline-secondary"}
+                    size="sm" 
+                    className="me-2"
+                    onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                  >
+                    <FaSyncAlt className="me-1" /> {autoRefreshEnabled ? 'Auto: ON' : 'Auto: OFF'}
                   </Button>
                   
                   {selectedTicket.isEmail ? (

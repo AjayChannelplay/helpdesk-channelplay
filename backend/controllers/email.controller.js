@@ -744,6 +744,7 @@ exports.sendEmail = async (req, res) => {
       
       // Log detailed attachment info
       attachments.forEach((file, index) => {
+        console.log("--------------------------------->>>>>>>>>>")
         console.log(`📎 Attachment ${index + 1}: ${file.originalname}, ${file.size} bytes, ${file.mimetype}`);
         console.log('   Buffer exists:', !!file.buffer, 'Buffer length:', file.buffer?.length || 0);
       });
