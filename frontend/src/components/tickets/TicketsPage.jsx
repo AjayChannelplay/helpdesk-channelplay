@@ -55,10 +55,15 @@ const TicketsPage = () => {
   
   // Toggle message details visibility
   const toggleMessageDetails = (messageId) => {
-    setExpandedMessages(prev => ({
-      ...prev,
-      [messageId]: !prev[messageId]
-    }));
+    console.log('Toggle message details for:', messageId);
+    setExpandedMessages(prev => {
+      const newState = {
+        ...prev,
+        [messageId]: !prev[messageId]
+      };
+      console.log('Updated expanded messages state:', newState);
+      return newState;
+    });
   };
   
   // Get user info from auth service on component mount only
@@ -326,7 +331,9 @@ const TicketsPage = () => {
       const closedConversations = Array.isArray(response) ? response : 
                                  (response.data && Array.isArray(response.data)) ? response.data : [];
       
-      console.log('Processed closed conversations:', closedConversations.length);
+      console.log('Processed closed conversations:', closedConversations);
+      console.log('Closed conversations count:', closedConversations.length);
+      
       setResolvedEmails(closedConversations);
     } catch (err) {
       console.error('Error fetching closed emails:', err);
@@ -657,7 +664,11 @@ const TicketsPage = () => {
                 <Form.Select 
                   size="sm" 
                   value={emailStatusFilter}
-                  onChange={(e) => setEmailStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    console.log('Email status filter changed to:', e.target.value);
+                    console.log('Current resolved emails count:', resolvedEmails.length);
+                    setEmailStatusFilter(e.target.value);
+                  }}
                   className="mx-2"
                   style={{ width: 'auto' }}
                 >
@@ -716,7 +727,12 @@ const TicketsPage = () => {
                                   from: email.fromName || (email.from?.emailAddress?.name || email.from?.emailAddress?.address),
                                   preview: email.preview,
                                   created: new Date(email.receivedDateTime).toLocaleDateString(),
-                                  time: new Date(email.receivedDateTime).toLocaleTimeString(),
+                                  time: (() => {
+                                    const dateObj = new Date(email.receivedDateTime);
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
+                                      ? new Date().toLocaleTimeString()
+                                      : dateObj.toLocaleTimeString();
+                                  })(),
                                   isEmail: true,
                                   emailId: email.id
                                 };
@@ -725,7 +741,15 @@ const TicketsPage = () => {
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{email.subject}</div>
-                                <small className="ticket-time">{new Date(email.receivedDateTime).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(email.receivedDateTime);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{email.fromName || email.from}</small>
@@ -740,16 +764,14 @@ const TicketsPage = () => {
                       )}
                       
                       {/* All Emails Section (grouped by conversation) */}
-                      {showAllEmails && allEmails.length > 0 && (
+                      {showAllEmails && (emailStatusFilter === 'open' ? allEmails.length > 0 : resolvedEmails.length > 0) && (
                         <div className="ticket-section">
                           <div className="ticket-section-header">
                             <small>
                               <FaEnvelope className="me-1" /> 
                               {emailStatusFilter === 'open' ? 'Open' : 'Closed'} Email Conversations 
                               {emailStatusFilter === 'open' ? 
-                                `(${allEmails.filter(email => !resolvedEmails.some(resolved => 
-                                  resolved.id === email.id || resolved.id === email.latestMessageId
-                                )).length})` : 
+                                `(${allEmails.length})` : 
                                 `(${resolvedEmails.length})`
                               }
                             </small>
@@ -767,7 +789,12 @@ const TicketsPage = () => {
                                   from: conversation.fromName,
                                   preview: conversation.preview,
                                   created: new Date(conversation.receivedDateTime).toLocaleDateString(),
-                                  time: new Date(conversation.receivedDateTime).toLocaleTimeString(),
+                                  time: (() => {
+                                    const dateObj = new Date(conversation.receivedDateTime);
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
+                                      ? new Date().toLocaleTimeString()
+                                      : dateObj.toLocaleTimeString();
+                                  })(),
                                   isEmail: true,
                                   emailId: conversation.latestMessageId,
                                   conversationId: conversation.id,
@@ -784,7 +811,15 @@ const TicketsPage = () => {
                                     <Badge bg="secondary" className="ms-2" pill>{conversation.messageCount}</Badge>
                                   )}
                                 </div>
-                                <small className="ticket-time">{new Date(conversation.receivedDateTime).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(conversation.receivedDateTime);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{conversation.fromName}</small>
@@ -807,23 +842,39 @@ const TicketsPage = () => {
                           {tickets.map(ticket => (
                             <div 
                               key={ticket.id} 
-                              className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''}`}
+                              className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
                               onClick={() => setSelectedTicket(ticket)}
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{ticket.subject}</div>
-                                <small className="ticket-time">{new Date(ticket.created_at).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(ticket.created_at);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
-                                <small className="ticket-customer">{ticket.customer_email}</small>
-                                <Badge 
-                                  bg={ticket.status === 'new' ? 'info' : 
-                                     ticket.status === 'open' ? 'success' : 
-                                     ticket.status === 'closed' ? 'secondary' : 'warning'} 
-                                  pill
-                                >
-                                  {ticket.status}
-                                </Badge>
+                                <small className="ticket-customer">{ticket.customer_email || ticket.email}</small>
+                                <div>
+                                  <Badge 
+                                    bg={ticket.status === 'new' ? 'info' : 
+                                       ticket.status === 'open' ? 'success' : 
+                                       ticket.status === 'closed' ? 'secondary' : 'warning'} 
+                                    pill
+                                    className="me-1"
+                                  >
+                                    {ticket.status}
+                                  </Badge>
+                                  {ticket.reopened_from_closed && (
+                                    <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
+                                      Reopened
+                                    </Badge>
+                                  )}
+                                </div>
                               </div>
                               <div className="ticket-message">
                                 <small>{ticket.description?.substring(0, 60)}...</small>
@@ -868,8 +919,20 @@ const TicketsPage = () => {
                     <FaRegCalendarAlt className="mx-1" /> {
                       (() => {
                         try {
-                          return new Date(selectedTicket.created_at || selectedTicket.created || Date.now()).toLocaleString();
+                          // Make sure the date object is properly created with time information
+                          const timestamp = selectedTicket.created_at || selectedTicket.created || Date.now();
+                          const dateObj = new Date(timestamp);
+                          // Check if the timestamp is valid and has proper time values
+                          const isTimeValid = !isNaN(dateObj.getTime()) && 
+                                            !(dateObj.getHours() === 0 && 
+                                              dateObj.getMinutes() === 0 && 
+                                              dateObj.getSeconds() === 0);
+                          
+                          // Use the current time if time component is zeroed out (00:00:00)
+                          const displayDate = isTimeValid ? dateObj : new Date();
+                          return displayDate.toLocaleString();
                         } catch (e) {
+                          console.error('Error formatting date:', e);
                           return new Date().toLocaleString();
                         }
                       })()
@@ -983,7 +1046,14 @@ const TicketsPage = () => {
                                 <small className="me-2">
                                   {(() => {
                                     try {
-                                      return message.receivedDateTime ? new Date(message.receivedDateTime).toLocaleString() : 'Unknown time';
+                                      if (!message.receivedDateTime) return 'Unknown time';
+                                      const dateObj = new Date(message.receivedDateTime);
+                                      // Check if hours, minutes, seconds are all zero
+                                      if (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) {
+                                        return new Date().toLocaleString();
+                                      } else {
+                                        return dateObj.toLocaleString();
+                                      }
                                     } catch (e) {
                                       return new Date().toLocaleString();
                                     }
@@ -992,8 +1062,14 @@ const TicketsPage = () => {
                                 <Button 
                                   variant="link" 
                                   size="sm" 
-                                  className="p-0 text-muted" 
-                                  onClick={() => toggleMessageDetails(message.id || `msg-${index}`)}
+                                  className="p-0 text-muted info-icon-button" 
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const msgId = message.id || `msg-${index}`;
+                                    console.log('Info icon clicked for message:', msgId);
+                                    toggleMessageDetails(msgId);
+                                  }}
                                   title="Show/Hide Details"
                                 >
                                   {expandedMessages[message.id || `msg-${index}`] ? <FaAngleUp /> : <FaInfoCircle />}
@@ -1009,14 +1085,17 @@ const TicketsPage = () => {
                                 <p>No message content</p>
                               )}
                               
-                              {/* Display attachments if any */}
-                              {message.hasAttachments && message.attachments && message.attachments.length > 0 && (
+                              {/* Display attachments section - handles both Microsoft Graph attachments and S3 attachments */}
+                              {(message.hasAttachments || (message.attachments_urls && message.attachments_urls.length > 0)) && (
                                 <div className="message-attachments mt-3">
                                   <div className="attachments-header mb-2">
-                                    <FaPaperclip className="me-1" /> Attachments ({message.attachments.length})
+                                    <FaPaperclip className="me-1" /> Attachments
+                                    {message.attachments && message.attachments.length > 0 && <span> ({message.attachments.length})</span>}
+                                    {message.attachments_urls && message.attachments_urls.length > 0 && <span> ({message.attachments_urls.length})</span>}
                                   </div>
                                   <div className="attachments-list">
-                                    {message.attachments.map((attachment, i) => {
+                                    {/* Handle Microsoft Graph attachments */}
+                                    {message.attachments && message.attachments.length > 0 && message.attachments.map((attachment, i) => {
                                       // Determine icon based on file type
                                       let icon = <FaFile />;
                                       if (attachment.name) {
@@ -1052,7 +1131,7 @@ const TicketsPage = () => {
                                       };
                                       
                                       return (
-                                        <div key={attachment.id} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
+                                        <div key={`ms-${attachment.id || i}`} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
                                           <div className="attachment-icon me-2">
                                             {icon}
                                           </div>
@@ -1074,6 +1153,65 @@ const TicketsPage = () => {
                                         </div>
                                       );
                                     })}
+                                    
+                                    {/* Handle S3 attachments */}
+                                    {message.attachments_urls && message.attachments_urls.length > 0 && message.attachments_urls.map((attachment, i) => {
+                                      // Determine icon based on file type
+                                      let icon = <FaFile />;
+                                      if (attachment.name) {
+                                        const extension = attachment.name.split('.').pop().toLowerCase();
+                                        if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'].includes(extension)) {
+                                          icon = <FaFileImage />;
+                                        } else if (['pdf'].includes(extension)) {
+                                          icon = <FaFilePdf />;
+                                        } else if (['doc', 'docx'].includes(extension)) {
+                                          icon = <FaFileWord />;
+                                        } else if (['xls', 'xlsx'].includes(extension)) {
+                                          icon = <FaFileExcel />;
+                                        } else if (['ppt', 'pptx'].includes(extension)) {
+                                          icon = <FaFilePowerpoint />;
+                                        } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extension)) {
+                                          icon = <FaFileArchive />;
+                                        } else if (['txt', 'text'].includes(extension)) {
+                                          icon = <FaFileAlt />;
+                                        }
+                                      }
+                                      
+                                      // For S3 attachments, we can display image previews for image files
+                                      const isImage = attachment.contentType && attachment.contentType.startsWith('image/');
+                                      
+                                      return (
+                                        <div key={`s3-${i}`} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
+                                          <div className="attachment-icon me-2">
+                                            {icon}
+                                          </div>
+                                          <div className="attachment-details flex-grow-1">
+                                            <div className="attachment-name">{attachment.name}</div>
+                                            <small className="text-muted">{formatFileSize(attachment.size)}</small>
+                                            {isImage && attachment.url && (
+                                              <div className="attachment-preview mt-2">
+                                                <img 
+                                                  src={attachment.url} 
+                                                  alt={attachment.name} 
+                                                  style={{ maxWidth: '100%', maxHeight: '150px', objectFit: 'contain' }} 
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="attachment-actions">
+                                            <Button 
+                                              variant="outline-primary" 
+                                              size="sm"
+                                              href={attachment.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                            >
+                                              <FaDownload /> Download
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               )}
@@ -1085,23 +1223,11 @@ const TicketsPage = () => {
                                     <div className="mb-1">
                                       <small className="text-muted">
                                         <strong>From: </strong>
-                                        {message.from.emailAddress.name} &lt;{message.from.emailAddress.address}&gt;
-                                      </small>
-                                    </div>
-                                  )}
-                                  
-                                  {message.toRecipients && message.toRecipients.length > 0 && (
-                                    <div className="mb-1">
-                                      <small className="text-muted">
-                                        <strong>To: </strong>
-                                        {message.toRecipients.map((recipient, i) => (
-                                          <span key={i}>
-                                            {recipient.emailAddress.name ? 
-                                              `${recipient.emailAddress.name} <${recipient.emailAddress.address}>` : 
-                                              recipient.emailAddress.address}
-                                            {i < message.toRecipients.length - 1 ? ', ' : ''}
-                                          </span>
-                                        ))}
+                                        {(() => {
+                                          const address = message.from.emailAddress.address || 'no-email';
+                                          const name = message.from.emailAddress.name || '';
+                                          return name ? `${name} <${address}>` : address;
+                                        })()} 
                                       </small>
                                     </div>
                                   )}
@@ -1110,14 +1236,48 @@ const TicketsPage = () => {
                                     <div className="mb-1">
                                       <small className="text-muted">
                                         <strong>CC: </strong>
-                                        {message.ccRecipients.map((recipient, i) => (
-                                          <span key={i}>
-                                            {recipient.emailAddress.name ? 
-                                              `${recipient.emailAddress.name} <${recipient.emailAddress.address}>` : 
-                                              recipient.emailAddress.address}
-                                            {i < message.ccRecipients.length - 1 ? ', ' : ''}
-                                          </span>
-                                        ))}
+                                        {message.ccRecipients.map((recipient, i) => {
+                                          // Case 1: Microsoft Graph API format
+                                          if (recipient && recipient.emailAddress) {
+                                            const address = recipient.emailAddress.address || '';
+                                            const name = recipient.emailAddress.name || '';
+                                            return (
+                                              <span key={i}>
+                                                {name ? `${name} <${address}>` : address}
+                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                              </span>
+                                            );
+                                          }
+                                          
+                                          // Case 2: Simple string format
+                                          else if (typeof recipient === 'string') {
+                                            return (
+                                              <span key={i}>
+                                                {recipient}
+                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                              </span>
+                                            );
+                                          }
+                                          
+                                          // Case 3: Simple object format
+                                          else if (recipient && typeof recipient === 'object') {
+                                            // Try to find address in common property names
+                                            const address = recipient.address || recipient.email || recipient.mail || '';
+                                            const name = recipient.name || recipient.displayName || '';
+                                            
+                                            if (address) {
+                                              return (
+                                                <span key={i}>
+                                                  {name ? `${name} <${address}>` : address}
+                                                  {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                                </span>
+                                              );
+                                            }
+                                          }
+                                          
+                                          // Final fallback
+                                          return <span key={i}>{JSON.stringify(recipient).replace(/[{}"\']/g, '')}{i < message.ccRecipients.length - 1 ? ', ' : ''}</span>;
+                                        })}
                                       </small>
                                     </div>
                                   )}
@@ -1126,7 +1286,13 @@ const TicketsPage = () => {
                                     <div>
                                       <small className="text-muted">
                                         <strong>Received: </strong>
-                                        {new Date(message.receivedDateTime).toLocaleString()}
+                                        {(() => {
+                                          const dateObj = new Date(message.receivedDateTime);
+                                          // Check if hours, minutes, seconds are all zero
+                                          return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                            ? new Date().toLocaleString() 
+                                            : dateObj.toLocaleString();
+                                        })()}
                                       </small>
                                     </div>
                                   )}
@@ -1141,119 +1307,128 @@ const TicketsPage = () => {
                   </div>
                 )}
               </Card.Body>
-              <Card.Footer>
-                <Form>
-                  <Form.Group>
-                    {showCcField && (
-                      <InputGroup className="mb-2">
-                        <InputGroup.Text>CC:</InputGroup.Text>
+              {/* Only show reply section for non-closed tickets/emails */}
+              {(emailStatusFilter !== 'closed' && (selectedTicket.status !== 'closed')) && (
+                <Card.Footer>
+                  <Form>
+                    <Form.Group>
+                      {showCcField && (
+                        <InputGroup className="mb-2">
+                          <InputGroup.Text>CC:</InputGroup.Text>
+                          <Form.Control 
+                            type="text" 
+                            placeholder="recipient1@example.com, recipient2@example.com"
+                            value={ccRecipients}
+                            onChange={(e) => setCcRecipients(e.target.value)}
+                            disabled={sending}
+                          />
+                        </InputGroup>
+                      )}
+                      <InputGroup>
                         <Form.Control 
-                          type="text" 
-                          placeholder="recipient1@example.com, recipient2@example.com"
-                          value={ccRecipients}
-                          onChange={(e) => setCcRecipients(e.target.value)}
+                          as="textarea" 
+                          rows={3} 
+                          placeholder="Type your reply here..."
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
                           disabled={sending}
                         />
                       </InputGroup>
-                    )}
-                    <InputGroup>
-                      <Form.Control 
-                        as="textarea" 
-                        rows={3} 
-                        placeholder="Type your reply here..."
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        disabled={sending}
-                      />
-                    </InputGroup>
-                    {attachments.length > 0 && (
-                      <div className="mt-2 mb-2">
-                        <small className="text-muted d-block mb-1">Attachments:</small>
-                        <ListGroup variant="flush" className="attachment-list">
-                          {attachments.map((file, index) => (
-                            <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
-                              <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
-                                <FaPaperclip size={12} className="me-1 flex-shrink-0" />
-                                {file.name} ({ (file.size / 1024).toFixed(1) } KB)
-                              </small>
-                              <Button 
-                                variant="link" 
-                                size="sm" 
-                                className="p-0 text-danger ms-2 flex-shrink-0" 
-                                onClick={() => handleRemoveAttachment(file.name)} 
-                                aria-label={`Remove ${file.name}`}
-                              >
-                                &times;
-                              </Button>
-                            </ListGroup.Item>
-                          ))}
-                        </ListGroup>
-                      </div>
-                    )}
-                    <div className="d-flex justify-content-between align-items-center mt-2">
-                      <div>
-                        <OverlayTrigger
-                          placement="top"
-                          overlay={<Tooltip>Attach files</Tooltip>}
-                        >
-                          <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
-                            <FaPaperclip />
-                          </Button>
-                        </OverlayTrigger>
-                        <input 
-                          type="file" 
-                          multiple 
-                          ref={fileInputRef} 
-                          onChange={handleFileChange} 
-                          style={{ display: 'none' }} 
-                        />
-                        <Button
-                          variant="link"
-                          className="text-muted p-0"
-                          onClick={() => setShowCcField(!showCcField)}
-                        >
-                          CC{showCcField ? ' ▲' : ' ▼'}
-                        </Button>
-                      </div>
-                      <div>
-                        {selectedTicket.isEmail ? (
-                          <Button 
-                            variant="info"
-                            className="me-2"
-                            onClick={() => resolveEmail(selectedTicket.emailId)}
-                            disabled={sending}
+                      {attachments.length > 0 && (
+                        <div className="mt-2 mb-2">
+                          <small className="text-muted d-block mb-1">Attachments:</small>
+                          <ListGroup variant="flush" className="attachment-list">
+                            {attachments.map((file, index) => (
+                              <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
+                                <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
+                                  <FaPaperclip size={12} className="me-1 flex-shrink-0" />
+                                  {file.name} ({ (file.size / 1024).toFixed(1) } KB)
+                                </small>
+                                <Button 
+                                  variant="link" 
+                                  size="sm" 
+                                  className="p-0 text-danger ms-2 flex-shrink-0" 
+                                  onClick={() => handleRemoveAttachment(file.name)} 
+                                  aria-label={`Remove ${file.name}`}
+                                >
+                                  &times;
+                                </Button>
+                              </ListGroup.Item>
+                            ))}
+                          </ListGroup>
+                        </div>
+                      )}
+                      <div className="d-flex justify-content-between align-items-center mt-2">
+                        <div>
+                          <OverlayTrigger
+                            placement="top"
+                            overlay={<Tooltip>Attach files</Tooltip>}
                           >
-                            <FaCheckCircle className="me-1" /> Resolve Email
-                          </Button>
-                        ) : (
-                          <Button 
-                            variant="outline-secondary" 
-                            className="me-2"
-                            onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}
+                            <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+                              <FaPaperclip />
+                            </Button>
+                          </OverlayTrigger>
+                          <input 
+                            type="file" 
+                            multiple 
+                            ref={fileInputRef} 
+                            onChange={handleFileChange} 
+                            style={{ display: 'none' }} 
+                          />
+                          <Button
+                            variant="link"
+                            className="text-muted p-0"
+                            onClick={() => setShowCcField(!showCcField)}
                           >
-                            <FaCheck className="me-1" /> Close
+                            CC{showCcField ? ' ▲' : ' ▼'}
                           </Button>
-                        )}
-                        <Button 
-                          variant="primary"
-                          onClick={handleSendReply}
-                          disabled={!replyText.trim() || sending}
-                        >
-                          {sending ? (
-                            <>
-                              <Spinner animation="border" size="sm" className="me-1" /> Sending...
-                            </>
+                        </div>
+                        <div>
+                          {selectedTicket.isEmail ? (
+                            <Button 
+                              variant="info"
+                              className="me-2"
+                              onClick={() => resolveEmail(selectedTicket.emailId)}
+                              disabled={sending}
+                            >
+                              <FaCheckCircle className="me-1" /> Resolve Email
+                            </Button>
                           ) : (
-                            <>
-                              <FaPaperPlane className="me-1" /> {selectedTicket.isEmail ? "Reply" : "Send"}
-                            </>
+                            <Button 
+                              variant="outline-secondary" 
+                              className="me-2"
+                              onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}
+                            >
+                              <FaCheck className="me-1" /> Close
+                            </Button>
                           )}
-                        </Button>
+                          <Button 
+                            variant="primary"
+                            onClick={handleSendReply}
+                            disabled={!replyText.trim() || sending}
+                          >
+                            {sending ? (
+                              <>
+                                <Spinner animation="border" size="sm" className="me-1" /> Sending...
+                              </>
+                            ) : (
+                              <>
+                                <FaPaperPlane className="me-1" /> {selectedTicket.isEmail ? "Reply" : "Send"}
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  </Form.Group>
-                </Form>
-              </Card.Footer>
+                    </Form.Group>
+                  </Form>
+                </Card.Footer>
+              )}
+              {/* Show a notice for closed tickets */}
+              {(emailStatusFilter === 'closed' || selectedTicket.status === 'closed') && (
+                <Card.Footer className="text-center text-muted py-3">
+                  <FaInfoCircle className="me-2" /> This conversation is closed. Replying is not available.
+                </Card.Footer>
+              )}
             </Card>
           ) : (
             <div className="text-center py-5">

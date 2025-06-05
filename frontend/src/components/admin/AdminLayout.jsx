@@ -31,15 +31,6 @@ const AdminLayout = () => {
             
             <Nav.Link 
               as={Link} 
-              to="/admin/oauth-setup" 
-              className={isActive('/admin/oauth-setup') ? 'active' : ''}
-            >
-              <FaKey className="nav-icon" />
-              <span>OAuth2 Setup</span>
-            </Nav.Link>
-            
-            <Nav.Link 
-              as={Link} 
               to="/admin/desk-management" 
               className={isActive('/admin/desk-management') ? 'active' : ''}
             >

@@ -2,6 +2,7 @@ const EmailService = require('../utils/email.service');
 const Ticket = require('../models/ticket.model');
 const Desk = require('../models/desk.model');
 const Message = require('../models/message.model');
+const { uploadFileToS3 } = require('../services/s3.service');
 const { supabase } = require('../config/db.config');
 const axios = require('axios');
 const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
@@ -133,22 +134,59 @@ exports.replyToEmail = async (req, res) => {
     const formattedContent = content;
     
     // Log attachment information
-    console.log(`Processing ${attachments.length} attachments for email reply`);
-    if (attachments.length > 0) {
-      attachments.forEach((file, index) => {
-        console.log(`Attachment ${index + 1}: ${file.originalname}, ${file.size} bytes, ${file.mimetype}`);
-      });
-    }
+    console.log(`Processing ${attachments?.length || 0} attachments for email reply`);
     
-    // Prepare the attachment payload for Microsoft Graph API if there are attachments
+    // Prepare the attachment payload for Microsoft Graph API
     let attachmentPayload = [];
-    if (attachments.length > 0) {
-      attachmentPayload = attachments.map(file => ({
-        '@odata.type': '#microsoft.graph.fileAttachment',
-        name: file.originalname,
-        contentType: file.mimetype,
-        contentBytes: file.buffer.toString('base64')
-      }));
+    let s3AttachmentUrls = [];
+    
+    if (attachments && attachments.length > 0) {
+      console.log('🗂️ Found attachments in the reply:');
+      
+      // Log detailed attachment info
+      attachments.forEach((file, index) => {
+        console.log(`📎 Attachment ${index + 1}: ${file.originalname}, ${file.size} bytes, ${file.mimetype}`);
+        console.log('   Buffer exists:', !!file.buffer, 'Buffer length:', file.buffer?.length || 0);
+      });
+      
+      try {
+        console.log(`🚀 Uploading ${attachments.length} files to S3 in folder: attachments/${desk_id}`);
+        
+        // Step 1: Upload files to S3 in parallel
+        const uploadPromises = attachments.map(file => uploadFileToS3(file, `attachments/${desk_id}`));
+        const uploadedFiles = await Promise.all(uploadPromises);
+        
+        console.log(`✅ Successfully uploaded ${uploadedFiles.length} files to S3`);
+        
+        // Step 2: Store the S3 URLs in a format ready for the database
+        s3AttachmentUrls = uploadedFiles.map(file => ({
+          name: file.originalName,
+          url: file.url,
+          contentType: file.contentType,
+          size: file.size,
+          s3Key: file.s3Key
+        }));
+        
+        console.log('📊 S3 attachment URLs prepared:', JSON.stringify(s3AttachmentUrls));
+        
+        // Step 3: Create payload for Microsoft Graph API
+        attachmentPayload = attachments.map(file => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: file.originalname,
+          contentType: file.mimetype,
+          contentBytes: file.buffer.toString('base64')
+        }));
+        
+        console.log('📤 Microsoft Graph attachment payload prepared');
+      } catch (error) {
+        console.error('❌ Error in attachment processing:', error);
+        return res.status(500).json({ 
+          message: `Error processing attachments: ${error.message}`,
+          success: false 
+        });
+      }
+    } else {
+      console.log('ℹ️ No attachments found in the reply');
     }
     
     // Send reply using Microsoft Graph API
@@ -184,24 +222,26 @@ exports.replyToEmail = async (req, res) => {
       const deskDisplayName = senderGraphUser.displayName;
 
       const messageDataForDb = {
-        desk_id: desk_id,
+        desk_id,
+        ticket_id: null, // Not applicable for direct replies
         microsoft_message_id: null, // Graph API /reply doesn't return the new message ID directly
         microsoft_conversation_id: originalMessage.conversationId,
         subject: originalMessage.subject, // Replies usually adopt the original subject, possibly prefixed with "Re:"
-        body_html: formattedContent,
         body_preview: content.substring(0, 255), // Simple preview
+        body_html: formattedContent,
+        body_text: content,
         from_address: deskEmailAddress,
         from_name: deskDisplayName,
         to_recipients: calculatedReplyToRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
-        cc_recipients: formattedCcRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
+        cc_recipients: formattedCcRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name || '' })),
         bcc_recipients: [], // Not typically part of a reply form
         sent_at: new Date().toISOString(), // Use sent_at for outgoing
+        has_attachments: attachments.length > 0,
         direction: 'outgoing',
         in_reply_to_microsoft_id: emailId, // ID of the message being replied to
         is_read_on_server: true, // It's an outgoing message
-        has_attachments: attachments.length > 0,
-        importance: originalMessage.importance, // Inherit importance or set a default
-        is_internal: false, // Assuming external reply
+        sender_id: req.userId, // Internal user ID of the agent who replied
+        attachments_urls: s3AttachmentUrls, // Store S3 URLs in the database
       };
 
       await Message.logMessage(messageDataForDb);
@@ -279,20 +319,20 @@ exports.resolveTicket = async (req, res) => {
         <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
         <p>We'd love to hear about your experience. Please rate our service by clicking one of the options below:</p>
         
-        <div style="margin: 30px 0; text-align: center;">
-          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=positive" style="text-decoration: none; margin: 0 10px;">
-            <span style="font-size: 32px;">😃</span>
-            <p>Great!</p>
+        <div style="margin: 30px 0; text-align: center; display: flex; justify-content: center; align-items: center;">
+          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=positive" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
+            <span style="font-size: 32px; display: block;">😃</span>
+            <p style="margin-top: 5px;">Great!</p>
           </a>
           
-          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=neutral" style="text-decoration: none; margin: 0 10px;">
-            <span style="font-size: 32px;">😐</span>
-            <p>Okay</p>
+          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=neutral" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
+            <span style="font-size: 32px; display: block;">😐</span>
+            <p style="margin-top: 5px;">Okay</p>
           </a>
           
-          <a href="[YOUR_FEEDBACK_URL]?ticketId=${originalMessage.conversationId}&feedback=negative" style="text-decoration: none; margin: 0 10px;">
-            <span style="font-size: 32px;">😞</span>
-            <p>Not satisfied</p>
+          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=negative" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
+            <span style="font-size: 32px; display: block;">😞</span>
+            <p style="margin-top: 5px;">Not satisfied</p>
           </a>
         </div>
         
@@ -661,23 +701,61 @@ exports.sendEmail = async (req, res) => {
     const emailRecipients = recipients && recipients.length > 0 ? 
       recipients : [{ emailAddress: { address: ticket.customer_email } }];
     
-    // Log attachment information
-    console.log(`Processing ${attachments.length} attachments for ticket email`);
-    if (attachments.length > 0) {
-      attachments.forEach((file, index) => {
-        console.log(`Attachment ${index + 1}: ${file.originalname}, ${file.size} bytes, ${file.mimetype}`);
-      });
-    }
+    // Check if we have attachments
+    console.log(`Processing ${attachments?.length || 0} attachments for ticket email`);
     
-    // Prepare the attachment payload for Microsoft Graph API if there are attachments
+    // Arrays to store attachment data
     let attachmentPayload = [];
-    if (attachments.length > 0) {
-      attachmentPayload = attachments.map(file => ({
-        '@odata.type': '#microsoft.graph.fileAttachment',
-        name: file.originalname,
-        contentType: file.mimetype,
-        contentBytes: file.buffer.toString('base64')
-      }));
+    let s3AttachmentUrls = [];
+    
+    // Upload each attachment to S3 and prepare the payload for Microsoft Graph API
+    if (attachments && attachments.length > 0) {
+      console.log('🗂️ Found attachments in the request:');
+      
+      // Log detailed attachment info
+      attachments.forEach((file, index) => {
+        console.log(`📎 Attachment ${index + 1}: ${file.originalname}, ${file.size} bytes, ${file.mimetype}`);
+        console.log('   Buffer exists:', !!file.buffer, 'Buffer length:', file.buffer?.length || 0);
+      });
+      
+      try {
+        console.log(`🚀 Uploading ${attachments.length} files to S3 in folder: attachments/${desk_id}`);
+        
+        // Step 1: Upload files to S3 in parallel
+        const uploadPromises = attachments.map(file => uploadFileToS3(file, `attachments/${desk_id}`));
+        const uploadedFiles = await Promise.all(uploadPromises);
+        
+        console.log(`✅ Successfully uploaded ${uploadedFiles.length} files to S3`);
+        
+        // Step 2: Store the S3 URLs in a format ready for the database
+        s3AttachmentUrls = uploadedFiles.map(file => ({
+          name: file.originalName,
+          url: file.url,
+          contentType: file.contentType,
+          size: file.size,
+          s3Key: file.s3Key
+        }));
+        
+        console.log('📊 S3 attachment URLs prepared:', JSON.stringify(s3AttachmentUrls));
+        
+        // Step 3: Create payload for Microsoft Graph API
+        attachmentPayload = attachments.map(file => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: file.originalname,
+          contentType: file.mimetype,
+          contentBytes: file.buffer.toString('base64')
+        }));
+        
+        console.log('📤 Microsoft Graph attachment payload prepared');
+      } catch (error) {
+        console.error('❌ Error in attachment processing:', error);
+        return res.status(500).json({ 
+          message: `Error processing attachments: ${error.message}`,
+          success: false 
+        });
+      }
+    } else {
+      console.log('ℹ️ No attachments found in the request');
     }
     
     // Send email using Microsoft Graph API
@@ -739,6 +817,7 @@ exports.sendEmail = async (req, res) => {
         importance: 'normal', // Or derive from ticket if available
         is_internal: false,
         ticket_id: ticketId, // Associate with the ticket
+        attachments_urls: s3AttachmentUrls, // Store S3 URLs for frontend display
       };
 
       await Message.logMessage(messageDataForDb);
@@ -781,6 +860,479 @@ exports.sendEmail = async (req, res) => {
 };
 
 
+
+// Endpoint for Microsoft Graph webhook notification
+exports.handleIncomingNotification = async (req, res) => {
+  try {
+    console.log('====================================================');
+    console.log('📨 INCOMING EMAIL WEBHOOK NOTIFICATION RECEIVED');
+    console.log('====================================================');
+    
+    // Microsoft webhook validation requires responding to subscription validation
+    if (req.query && req.query['validationToken']) {
+      console.log('🔐 Validation token request detected');
+      console.log('🔑 Validation token:', req.query['validationToken']);
+      res.set('Content-Type', 'text/plain');
+      return res.status(200).send(req.query['validationToken']);
+    }
+    
+    // Process notification
+    console.log('📝 Processing webhook payload:', JSON.stringify(req.body, null, 2));
+    
+    const notifications = req.body.value || [];
+    console.log(`📫 Found ${notifications.length} notifications to process`);
+    
+    if (notifications.length > 0) {
+      console.log('⚡ Starting async processing of notifications...');
+      
+      // Process notifications asynchronously so we can respond quickly to the webhook
+      processWebhookNotifications(notifications).catch(err => {
+        console.error('❌ CRITICAL ERROR PROCESSING WEBHOOK NOTIFICATIONS:', err);
+      });
+    } else {
+      console.log('⚠️ No notifications to process in webhook payload');
+    }
+    
+    // Return success response immediately to acknowledge receipt
+    console.log('✅ Sending 202 Accepted response to webhook caller');
+    return res.status(202).json({ message: 'Notification received and will be processed' });
+  } catch (error) {
+    console.error('❌ ERROR PROCESSING WEBHOOK NOTIFICATION:', error);
+    return res.status(500).json({ message: error.message || 'Error processing notification' });
+  }
+};
+
+// Process webhook notifications asynchronously
+const processWebhookNotifications = async (notifications) => {
+  try {
+    console.log('===========================================================');
+    console.log(`📥 PROCESSING ${notifications.length} WEBHOOK NOTIFICATIONS`);
+    console.log('===========================================================');
+
+    for (let i = 0; i < notifications.length; i++) {
+      const notification = notifications[i];
+      console.log(`\n📦 Processing notification ${i+1}/${notifications.length}`);
+      
+      // Get the subscription ID to identify which mailbox this is for
+      const subscriptionId = notification.subscriptionId;
+      const resourceData = notification.resourceData || {};
+      
+      console.log(`💬 Notification details:`);
+      console.log(`- Subscription: ${subscriptionId}`);
+      console.log(`- Resource: ${resourceData.id || 'unknown'}`);
+      console.log(`- Change type: ${notification.changeType || 'unknown'}`);
+      
+      // Find the desk associated with this subscription
+      console.log(`🔍 Looking up desk for subscription: ${subscriptionId}`);
+      const { data: subscriptions, error: subError } = await supabase
+        .from('microsoft_subscriptions')
+        .select('*')
+        .eq('subscription_id', subscriptionId)
+        .limit(1);
+        
+      if (subError || !subscriptions || subscriptions.length === 0) {
+        console.error('❌ Could not find subscription:', subscriptionId, subError);
+        continue;
+      }
+      
+      const desk_id = subscriptions[0].desk_id;
+      console.log(`✅ Found desk: ${desk_id}`);
+      
+      // Get message details
+      if (resourceData.id) {
+        console.log(`📧 Processing message: ${resourceData.id}`);
+        const result = await processNewIncomingEmail(resourceData.id, desk_id);
+        console.log(`📝 Message processing result: ${result ? 'Success' : 'Failed'}`);
+      } else {
+        console.warn('⚠️ No message ID in notification, skipping processing');
+      }
+    }
+    
+    console.log('===========================================================');
+    console.log('✅ FINISHED PROCESSING ALL WEBHOOK NOTIFICATIONS');
+    console.log('===========================================================');
+  } catch (error) {
+    console.error('❌ ERROR IN WEBHOOK NOTIFICATION PROCESSING:', error);
+  }
+};
+
+// Process a new incoming email
+const processNewIncomingEmail = async (messageId, desk_id) => {
+  console.log('======================================================');
+  console.log(`🔄 STARTING INCOMING EMAIL ATTACHMENT PIPELINE`);
+  console.log(`📧 Message ID: ${messageId} | Desk ID: ${desk_id}`);
+  console.log('======================================================');
+
+  try {
+    // STEP 1: INCOMING EMAIL WEBHOOK
+    console.log('\n📥 STEP 1: PROCESSING WEBHOOK DATA');
+    // Get access token for Microsoft Graph API
+    const accessToken = await getMicrosoftAccessToken(desk_id);
+    if (!accessToken) {
+      throw new Error('Failed to get Microsoft access token');
+    }
+    console.log('✓ Microsoft access token obtained');
+
+    // Fetch complete email details including attachments
+    const msgResponse = await axios.get(
+      `https://graph.microsoft.com/v1.0/me/messages/${messageId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    const email = msgResponse.data;
+    console.log(`✓ Email fetched - Subject: "${email.subject}"`);
+    console.log(`✓ From: ${email.from?.emailAddress?.address || 'Unknown'}`);
+    console.log(`✓ Has attachments: ${email.hasAttachments ? 'Yes' : 'No'}`);
+    
+    // If no attachments, exit early
+    if (!email.hasAttachments) {
+      console.log('\n⚠️ No attachments in this email. Skipping attachment processing.');
+      return true;
+    }
+    
+    // STEP 2: PARSE ATTACHMENTS (BASE64)
+    console.log('\n📦 STEP 2: PARSING ATTACHMENTS FROM EMAIL');
+    
+    // Get attachment metadata and content
+    const attachmentsResponse = await axios.get(
+      `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    const attachments = attachmentsResponse.data.value;
+    if (!attachments || attachments.length === 0) {
+      console.log('⚠️ No attachments found in response despite hasAttachments flag');
+      return true;
+    }
+    
+    console.log(`✓ Found ${attachments.length} attachments:`);
+    attachments.forEach((att, i) => {
+      console.log(`  ${i+1}) ${att.name} (${att.contentType}, ${att.size || 'unknown'} bytes)`);
+    });
+    
+    // STEP 3: UPLOAD TO S3 (NO ACL)
+    console.log('\n☁️ STEP 3: UPLOADING ATTACHMENTS TO S3');
+    
+    // Array to store results from S3 uploads
+    const s3UploadResults = [];
+    
+    // Process each attachment
+    for (let i = 0; i < attachments.length; i++) {
+      const attachment = attachments[i];
+      console.log(`\n📎 Processing attachment ${i+1}/${attachments.length}: ${attachment.name}`);
+      
+      try {
+        if (!attachment.contentBytes) {
+          console.error(`❌ Missing contentBytes for attachment: ${attachment.name}`);
+          continue;
+        }
+        
+        // 2a. DECODE BASE64
+        console.log(`→ Decoding base64 content...`);
+        // Log a small sample of the base64 content to verify it's valid
+        console.log(`Base64 sample (first 40 chars): ${attachment.contentBytes.substring(0, 40)}...`);
+        
+        // Decode the base64 content to a buffer
+        const buffer = Buffer.from(attachment.contentBytes, 'base64');
+        console.log(`✓ Decoded ${buffer.length} bytes of binary data`);
+        
+        // Verify buffer is not empty
+        if (buffer.length === 0) {
+          throw new Error('Decoded buffer is empty - invalid base64 content');
+        }
+        
+        // Prepare file object for S3 upload
+        const file = {
+          originalname: attachment.name,
+          buffer: buffer,
+          mimetype: attachment.contentType || 'application/octet-stream',
+          size: buffer.length
+        };
+        
+        // 3. UPLOAD TO S3
+        try {
+          console.log(`→ Uploading to S3 bucket: ${process.env.S3_BUCKET_NAME}...`);
+          console.log(`Folder path: attachments/${desk_id}/incoming`);
+          console.log(`File name: ${attachment.name}`);
+          console.log(`MIME type: ${attachment.contentType || 'application/octet-stream'}`);
+          console.log(`Buffer size: ${buffer.length} bytes`);
+          
+          // Ensure we have a valid buffer before upload
+          if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+            console.error(`❌ Invalid buffer for upload: ${typeof buffer}, length: ${buffer ? buffer.length : 'null'}`);
+            throw new Error('Invalid buffer for S3 upload');
+          }
+          
+          // Call S3 upload service
+          const uploadedFile = await uploadFileToS3(file, `attachments/${desk_id}/incoming`);
+          
+          if (!uploadedFile || !uploadedFile.url) {
+            throw new Error('S3 upload failed - no URL returned');
+          }
+          
+          console.log(`✅ UPLOAD SUCCESSFUL: ${uploadedFile.url}`);
+          
+          // 4. GET S3 URL & STORE METADATA
+          const attachmentMetadata = {
+            name: attachment.name,
+            originalName: attachment.name,
+            url: uploadedFile.url,
+            contentType: attachment.contentType || 'application/octet-stream',
+            size: attachment.size || buffer.length,
+            s3Key: uploadedFile.s3Key,
+            uploadTimestamp: new Date().toISOString()
+          };
+          
+          console.log('Attachment metadata prepared:', JSON.stringify(attachmentMetadata));
+          
+          // Add to results array
+          s3UploadResults.push(attachmentMetadata);
+        } catch (uploadError) {
+          console.error(`❌ S3 UPLOAD ERROR:`, uploadError);
+          throw uploadError;
+        }
+      } catch (attachErr) {
+        console.error(`❌ Failed to process attachment ${attachment.name}:`, attachErr);
+      }
+    }
+    
+    // Check if any uploads were successful
+    if (s3UploadResults.length === 0) {
+      console.error('❌ No attachments were successfully uploaded to S3');
+      return false;
+    }
+    
+    console.log(`✅ Successfully uploaded ${s3UploadResults.length} of ${attachments.length} attachments to S3`);
+    
+    // STEP 5: SAVE EMAIL + URLS IN DB
+    console.log('\n💾 STEP 5: SAVING ATTACHMENT URLS IN DATABASE');
+    console.log(`Saving ${s3UploadResults.length} attachment URLs to the database`);
+    
+    // DEBUG: Log the complete attachment data structure we're about to save
+    console.log('ATTACHMENT DATA TO SAVE:', JSON.stringify(s3UploadResults, null, 2));
+    
+    // Find existing message record
+    console.log(`Looking up message with microsoft_message_id: ${messageId}`);
+    const { data: messages, error: msgFindError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('microsoft_message_id', messageId);
+      
+    if (msgFindError) {
+      console.error(`❌ Database query error:`, msgFindError);
+      return false;
+    }
+    
+    if (!messages || messages.length === 0) {
+      console.log(`⚠️ No message record found with microsoft_message_id: ${messageId}`);
+      console.log(`→ Trying to find message by conversation ID instead...`);
+      
+      // Try to find by conversation ID if available
+      if (email.conversationId) {
+        console.log(`Searching by conversation ID: ${email.conversationId}`);
+        const { data: convMessages, error: convErr } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('microsoft_conversation_id', email.conversationId)
+          .order('created_at', { ascending: false });
+          
+        if (convErr) {
+          console.error(`❌ Error searching by conversation ID:`, convErr);
+          return false;
+        }
+          
+        if (convMessages && convMessages.length > 0) {
+          // Update the most recent message in this conversation
+          const targetMessage = convMessages[0];
+          console.log(`✅ Found message by conversation ID: ${targetMessage.id}`);
+          
+          // Print existing attachment URLs if any
+          if (targetMessage.attachments_urls && targetMessage.attachments_urls.length > 0) {
+            console.log(`Message already has ${targetMessage.attachments_urls.length} attachments`);
+          }
+          
+          // Perform the database update
+          console.log(`Updating message ${targetMessage.id} with attachment URLs...`);
+          const { error: updateErr } = await supabase
+            .from('messages')
+            .update({ 
+              attachments_urls: s3UploadResults,
+              has_attachments: true,
+              microsoft_message_id: messageId // Update the message ID too
+            })
+            .eq('id', targetMessage.id);
+          
+          if (updateErr) {
+            console.error(`❌ Failed to update message:`, updateErr);
+            return false;
+          }
+          
+          // Verify the update worked
+          const { data: verifyData } = await supabase
+            .from('messages')
+            .select('attachments_urls')
+            .eq('id', targetMessage.id)
+            .single();
+            
+          if (verifyData && verifyData.attachments_urls) {
+            console.log(`✅ Verified database update: ${verifyData.attachments_urls.length} attachments saved`);
+          }
+          
+          console.log(`✅ SUCCESSFULLY UPDATED MESSAGE ${targetMessage.id} WITH ${s3UploadResults.length} ATTACHMENT URLS`);
+          return true;
+        } else {
+          console.log(`⚠️ No messages found with conversation ID: ${email.conversationId}`);
+        }
+      }
+      
+      // If we reach here, we couldn't find a message to update
+      console.error(`❌ Could not locate a message record to update with attachments`);
+      return false;
+    }
+    
+    // Update the message with attachment URLs
+    const message = messages[0];
+    console.log(`✅ Found message record directly: ID ${message.id}`);
+    
+    // Print existing attachment URLs if any
+    if (message.attachments_urls && message.attachments_urls.length > 0) {
+      console.log(`Message already has ${message.attachments_urls.length} attachments`);
+    }
+    
+    // Perform the update
+    console.log(`Updating message ${message.id} with attachment URLs...`);
+    const { error: updateError } = await supabase
+      .from('messages')
+      .update({ 
+        attachments_urls: s3UploadResults,
+        has_attachments: true
+      })
+      .eq('id', message.id);
+      
+    // Verify the update worked
+    if (!updateError) {
+      const { data: verifyData } = await supabase
+        .from('messages')
+        .select('attachments_urls')
+        .eq('id', message.id)
+        .single();
+        
+      if (verifyData && verifyData.attachments_urls) {
+        console.log(`✅ Verified database update: ${verifyData.attachments_urls.length} attachments saved`);
+      }
+    }
+    
+    if (updateError) {
+      console.error(`❌ Failed to update message with attachment URLs:`, updateError);
+      return false;
+    }
+    
+    console.log('======================================================');
+    console.log(`✅ ATTACHMENT PIPELINE COMPLETED SUCCESSFULLY`);
+    console.log(`✅ UPDATED MESSAGE ${message.id} WITH ${s3UploadResults.length} ATTACHMENT URLS`);
+    console.log('======================================================');
+    
+    return true;
+  } catch (error) {
+    console.error(`❌ ATTACHMENT PIPELINE FAILED:`, error);
+    console.log('======================================================');
+    return false;
+  }
+};
+
+// Check if an incoming email is a reply to a closed ticket and should create a new ticket
+const checkAndCreateNewTicketFromClosedReply = async (message, deskId) => {
+  try {
+    if (!message.microsoft_conversation_id || !message.in_reply_to_microsoft_id) {
+      // Not a reply or no conversation ID, nothing to check
+      return false;
+    }
+    
+    // Check if the message is a reply to a closed conversation
+    const { data: previousMessages, error: prevError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('microsoft_conversation_id', message.microsoft_conversation_id)
+      .eq('status', 'closed')
+      .order('received_at', { ascending: false })
+      .limit(5); // Get the latest messages from this conversation
+      
+    if (prevError) {
+      console.error('Error checking previous messages:', prevError);
+      return false;
+    }
+    
+    // If we found closed messages in this conversation and the new message is a reply to one of them
+    if (previousMessages && previousMessages.length > 0) {
+      const repliedToClosedMessage = previousMessages.some(prevMsg => 
+        prevMsg.microsoft_message_id === message.in_reply_to_microsoft_id ||
+        message.body_html?.includes('Your ticket has been resolved') ||
+        message.body_preview?.includes('Your ticket has been resolved')
+      );
+      
+      if (repliedToClosedMessage) {
+        console.log(`Message ${message.microsoft_message_id} is a reply to a closed ticket. Creating new ticket...`);
+        
+        // Create a new ticket
+        const { data: newTicket, error: ticketError } = await supabase
+          .from('tickets')
+          .insert({
+            desk_id: deskId,
+            subject: message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`,
+            description: message.body_preview || 'Reply to closed ticket',
+            status: 'open',
+            priority: 'medium',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            email: message.from_address,
+            customer_name: message.from_name,
+            reopened_from_closed: true,
+            previous_conversation_id: message.microsoft_conversation_id
+          })
+          .select()
+          .single();
+          
+        if (ticketError) {
+          console.error('Error creating new ticket:', ticketError);
+          return false;
+        }
+        
+        // Update this message to be part of a new conversation (will happen through MS Graph API later)
+        // and associate it with the new ticket
+        const { error: updateError } = await supabase
+          .from('messages')
+          .update({ 
+            status: 'open',
+            ticket_id: newTicket.id
+          })
+          .eq('id', message.id);
+          
+        if (updateError) {
+          console.error('Error updating message for new ticket:', updateError);
+          return false;
+        }
+        
+        console.log(`Created new ticket ${newTicket.id} from reply to closed conversation ${message.microsoft_conversation_id}`);
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error in checkAndCreateNewTicketFromClosedReply:', error);
+    return false;
+  }
+};
 
 // Fetch emails for a desk using Microsoft Graph API
 exports.fetchEmails = async (req, res) => {
@@ -1067,8 +1619,6 @@ exports.markAsRead = async (req, res) => {
     }
     
     console.log(`Marking email ${emailId} as read for desk ${deskId}`);
-    
-    // Get access token for Microsoft Graph API
     const accessToken = await getMicrosoftAccessToken(deskId);
     
     // Mark email as read using Microsoft Graph API

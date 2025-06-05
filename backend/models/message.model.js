@@ -5,6 +5,7 @@ const Message = {
    * Logs an email message (incoming or outgoing) to the database.
    * This method is intended to be the primary way to save email messages.
    * It will also associate the message with a ticket if a ticket_id is provided.
+   * For incoming replies to closed tickets, it will mark them for processing as new tickets.
    */
   logMessage: async (messageData) => {
     const {
@@ -57,6 +58,8 @@ const Message = {
       in_reply_to_microsoft_id,
       sender_id: messageData.sender_id || null, // Internal user ID (agent), defaults to null
       is_internal,
+      // Include attachments_urls if provided
+      attachments_urls: messageData.attachments_urls || [],
       // Ensure created_at and updated_at are handled by Supabase defaults or triggers
     };
 
@@ -74,6 +77,118 @@ const Message = {
     } catch (error) {
       console.error('Catch block error in logMessage:', error);
       throw error; // Re-throw to be caught by caller
+    }
+    
+    // If this is an incoming email, check if it's a reply to a closed ticket
+    if (messageData.direction === 'incoming' && 
+        messageData.microsoft_conversation_id && 
+        !messageData.ticket_id) {
+      try {
+        // Check if this message is a reply to a closed message/ticket
+        const shouldProcess = await Message.checkIfReplyToClosedTicket(data[0], messageData.desk_id);
+        if (shouldProcess) {
+          console.log(`Message ${messageData.microsoft_message_id} is flagged as reply to closed ticket`);
+        }
+      } catch (error) {
+        console.error('Error checking if message is reply to closed ticket:', error);
+        // Don't throw here, we still want the message to be saved
+      }
+    }
+    
+    return data ? data[0] : null;
+  },
+  
+  /**
+   * Checks if a message is a reply to a closed ticket and handles it accordingly
+   * by creating a new ticket if needed
+   */
+  checkIfReplyToClosedTicket: async (message, deskId) => {
+    if (!message || !message.microsoft_conversation_id) {
+      return false;
+    }
+    
+    try {
+      // Find the conversation this message belongs to
+      const { data: conversationMessages, error: convError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('microsoft_conversation_id', message.microsoft_conversation_id)
+        .eq('status', 'closed')
+        .order('received_at', { ascending: false })
+        .limit(5); // Get the most recent closed messages from this conversation
+      
+      if (convError) {
+        console.error('Error checking conversation messages:', convError);
+        return false;
+      }
+      
+      // If there are closed messages in this conversation, this might be a reply to a closed ticket
+      if (conversationMessages && conversationMessages.length > 0) {
+        // Look for evidence this is a reply to a resolved ticket email
+        // 1. Check if it's direct reply to a closed message
+        // 2. Check if content contains feedback resolution indicators
+        const isReplyToClosedTicket = 
+          // Direct reply to a closed message
+          (message.in_reply_to_microsoft_id && 
+            conversationMessages.some(msg => msg.microsoft_message_id === message.in_reply_to_microsoft_id)) ||
+          // Check for resolution email content indicators in what they're replying to  
+          (message.body_html && (
+            message.body_html.includes('ticket has been resolved') || 
+            message.body_html.includes('How was your experience?'))) ||
+          (message.body_preview && (
+            message.body_preview.includes('ticket has been resolved') ||
+            message.body_preview.includes('How was your experience?')));
+        
+        if (isReplyToClosedTicket) {
+          console.log(`Message ${message.id} detected as reply to closed ticket. Creating new ticket...`);
+          
+          // Create a new ticket from this message
+          const { data: newTicket, error: ticketError } = await supabase
+            .from('tickets')
+            .insert({
+              desk_id: deskId,
+              subject: message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`,
+              description: message.body_preview || 'Reply to closed ticket',
+              status: 'open',
+              priority: 'medium',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              email: message.from_address,
+              customer_name: message.from_name,
+              reopened_from_closed: true,
+              previous_conversation_id: message.microsoft_conversation_id
+            })
+            .select()
+            .single();
+            
+          if (ticketError) {
+            console.error('Error creating new ticket from closed reply:', ticketError);
+            return false;
+          }
+          
+          // Update this message to be linked to the new ticket and marked as 'open'
+          const { error: updateError } = await supabase
+            .from('messages')
+            .update({ 
+              status: 'open',
+              ticket_id: newTicket.id 
+            })
+            .eq('id', message.id);
+            
+          if (updateError) {
+            console.error('Error updating message status and ticket_id:', updateError);
+            return false;
+          }
+          
+          console.log(`Successfully created new ticket #${newTicket.id} from reply to closed conversation`);
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error in checkIfReplyToClosedTicket:', error);
+      return false;
     }
   },
 
@@ -181,6 +296,7 @@ const Message = {
     const allowedUpdates = {};
     if (updateData.ticket_id !== undefined) allowedUpdates.ticket_id = updateData.ticket_id;
     if (updateData.is_internal !== undefined) allowedUpdates.is_internal = updateData.is_internal;
+    if (updateData.attachments_urls !== undefined) allowedUpdates.attachments_urls = updateData.attachments_urls;
     // Add other fields that are safe to update internally
 
     if (Object.keys(allowedUpdates).length === 0) {

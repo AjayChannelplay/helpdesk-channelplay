@@ -8,7 +8,10 @@ const multer = require('multer');
 const storage = multer.memoryStorage(); // Store files in memory
 const upload = multer({ storage: storage });
 
-// Apply authentication middleware to all routes
+// Microsoft Graph webhook notification route - no auth required for external webhooks
+router.post('/webhook/notification', express.json(), emailController.handleIncomingNotification);
+
+// Apply authentication middleware to all other routes
 router.use(authJwt.verifyToken);
 
 // Send email for a ticket
