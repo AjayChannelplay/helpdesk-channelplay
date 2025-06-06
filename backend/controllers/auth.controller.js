@@ -35,6 +35,7 @@ exports.register = async (req, res) => {
 
 // Login user
 exports.login = async (req, res) => {
+  console.log('[auth.controller] Login attempt received:', { email: req.body.email });
   try {
     // FOR DEMO PURPOSES: Allow login with test credentials without database check - TEMPORARILY DISABLED
     // if ((req.body.email === 'admin@example.com' && req.body.password === 'password123') ||

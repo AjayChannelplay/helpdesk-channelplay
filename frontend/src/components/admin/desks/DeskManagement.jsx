@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Table, Badge, Spinner, Alert, Modal, Form } from 'react-bootstrap';
-import { FaPlus, FaEdit, FaTrash, FaEnvelope, FaExclamationTriangle, FaCheckCircle } from 'react-icons/fa';
+import { Card, Button, Table, Badge, Spinner, Alert, Modal, Form, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { FaPlus, FaEdit, FaTrash, FaEnvelope, FaExclamationTriangle, FaCheckCircle, FaSync } from 'react-icons/fa';
 import API from '../../../services/api.service';
 import './DeskManagement.css';
 
@@ -61,13 +61,14 @@ const DeskManagement = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSubmitLoading(true);
-    
     try {
-      // Format allowed domains
-      const domainsArray = formData.allowed_domains
-        ? formData.allowed_domains.split(',').map(domain => domain.trim())
-        : [];
+      setSubmitLoading(true);
+      setError(null);
+      
+      // Convert allowed_domains from comma-separated string to array
+      const domainsArray = formData.allowed_domains ? 
+        formData.allowed_domains.split(',').map(domain => domain.trim()) :
+        [];
       
       const payload = {
         ...formData,
@@ -79,18 +80,84 @@ const DeskManagement = () => {
       // Add new desk to state
       setDesks([...desks, response.data.desk]);
       setShowModal(false);
-      setSuccessMessage('Desk created successfully!');
-      
-      // Clear success message after 3 seconds
-      setTimeout(() => {
-        setSuccessMessage(null);
-      }, 3000);
-      
+
+      // If OAuth setup was successful and we have an auth URL
+      if (response.data.oauthSetup && response.data.authUrl) {
+        // Immediately redirect to Microsoft authentication
+        window.location.href = response.data.authUrl;
+      } else {
+        // Regular success message
+        setSuccessMessage('Desk created successfully!' + 
+          (response.data.message ? ' ' + response.data.message : ''));
+        
+        // Clear success message after 3 seconds
+        setTimeout(() => {
+          setSuccessMessage(null);
+        }, 3000);
+      }
     } catch (err) {
       console.error('Error creating desk:', err);
       setError('Failed to create desk. ' + (err.response?.data?.message || 'Please try again.'));
     } finally {
       setSubmitLoading(false);
+    }
+  };
+
+  // Function to handle Microsoft authentication
+  const handleMicrosoftAuth = async (deskId, emailHint) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Make a direct API call to get the Microsoft auth URL
+      const response = await API.get(`/email-auth/microsoft/url`, {
+        params: {
+          deskId: deskId,
+          email: emailHint || ''
+        }
+      });
+      
+      // If successful, redirect to the Microsoft auth URL
+      if (response.data && response.data.authUrl) {
+        console.log('Redirecting to Microsoft auth URL:', response.data.authUrl);
+        window.location.href = response.data.authUrl;
+      } else {
+        setError('Failed to generate Microsoft authentication URL');
+      }
+    } catch (err) {
+      console.error('Failed to get Microsoft auth URL:', err);
+      setError('Failed to initiate Microsoft authentication. ' + (err.response?.data?.message || 'Please try again.'));
+      setLoading(false);
+    }
+  };
+
+  // Function to refresh Microsoft OAuth token
+  const handleRefreshToken = async (deskId) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Call backend to refresh the token
+      const response = await API.post(`/email-auth/microsoft/refresh-token/${deskId}`);
+      
+      if (response.data.success) {
+        setSuccessMessage('OAuth token refreshed successfully!');
+        
+        // Refresh desks to show updated token status
+        await fetchDesks();
+      } else {
+        setError('Failed to refresh token: ' + (response.data.message || 'Unknown error'));
+      }
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Error refreshing OAuth token:', err);
+      setError('Failed to refresh token. ' + (err.response?.data?.message || 'Please try again.'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -159,7 +226,7 @@ const DeskManagement = () => {
                   <th>Name</th>
                   <th>Description</th>
                   <th>Email</th>
-                  <th>Integration</th>
+                  <th>OAuth Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -171,41 +238,72 @@ const DeskManagement = () => {
                     <td>{desk.email_address || '-'}</td>
                     <td>
                       {desk.email_integration ? (
-                        <Badge bg="success" className="d-flex align-items-center">
-                          <FaEnvelope className="me-1" />
-                          <span>
-                            {desk.email_integration.provider_type === 'MICROSOFT' ? 'Microsoft' : 'Gmail'} 
-                            <span className="ms-1 small">Connected</span>
-                          </span>
-                        </Badge>
+                        <div className="d-flex align-items-center">
+                          <div className="oauth-status-pill authenticated">
+                            <FaCheckCircle className="me-2" />
+                            <div>
+                              <div className="fw-semibold">{desk.email_integration.provider_type === 'MICROSOFT' ? 'Microsoft' : 'Gmail'} Connected</div>
+                              <small className="text-success">Authenticated</small>
+                            </div>
+                          </div>
+                        </div>
                       ) : (
-                        <div>
-                          <Badge bg="secondary" className="d-flex align-items-center">
-                            Not Connected
-                          </Badge>
-                          <Button 
-                            variant="link" 
-                            size="sm" 
-                            className="p-0 mt-1"
-                            onClick={() => window.location.href = `/admin/oauth-setup?desk=${desk.id}&email=${encodeURIComponent(desk.email_address || '')}`}
-                          >
-                            Configure...
-                          </Button>
+                        <div className="d-flex align-items-center">
+                          <div className="oauth-status-pill not-authenticated">
+                            <FaExclamationTriangle className="me-2" />
+                            <div>
+                              <div className="fw-semibold">Not Connected</div>
+                              <Button 
+                                variant="link" 
+                                size="sm" 
+                                className="p-0 configure-now-link"
+                                onClick={() => handleMicrosoftAuth(desk.id, desk.email_address)}
+                              >
+                                Configure Now
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </td>
                     <td>
                       <div className="d-flex gap-2">
-                        <Button variant="outline-primary" size="sm">
-                          <FaEdit />
-                        </Button>
-                        <Button 
-                          variant="outline-danger" 
-                          size="sm"
-                          onClick={() => handleDeleteDesk(desk.id)}
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={<Tooltip>{desk.email_integration ? 'Refresh OAuth Token' : 'Authentication Required'}</Tooltip>}
                         >
-                          <FaTrash />
-                        </Button>
+                          <Button 
+                            variant="outline-info" 
+                            size="sm"
+                            onClick={desk.email_integration ? () => handleRefreshToken(desk.id) : undefined}
+                            disabled={!desk.email_integration}
+                          >
+                            <FaSync />
+                          </Button>
+                        </OverlayTrigger>
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={<Tooltip>Edit Desk</Tooltip>}
+                        >
+                          <Button 
+                            variant="outline-primary" 
+                            size="sm"
+                          >
+                            <FaEdit />
+                          </Button>
+                        </OverlayTrigger>
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={<Tooltip>Delete Desk</Tooltip>}
+                        >
+                          <Button 
+                            variant="outline-danger" 
+                            size="sm"
+                            onClick={() => handleDeleteDesk(desk.id)}
+                          >
+                            <FaTrash />
+                          </Button>
+                        </OverlayTrigger>
                       </div>
                     </td>
                   </tr>

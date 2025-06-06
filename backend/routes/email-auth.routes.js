@@ -11,7 +11,7 @@ router.get('/microsoft/callback', (req, res) => {
   return emailAuthController.handleMicrosoftCallback(req, res);
 });
 
-router.post('/microsoft/refresh/:integrationId', emailAuthController.refreshMicrosoftToken);
+router.post('/microsoft/refresh-token/:deskId', emailAuthController.refreshMicrosoftToken);
 
 // Root callback (used by Microsoft after user authorizes)
 router.get('/callback', (req, res) => {

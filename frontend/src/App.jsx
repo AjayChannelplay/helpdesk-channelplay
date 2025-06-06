@@ -98,7 +98,6 @@ function App() {
               <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
                 <Route index element={<Navigate to="/admin/user-management" replace />} />
                 <Route path="user-management" element={<UserManagement />} />
-                <Route path="oauth-setup" element={<OAuthSetup />} />
                 <Route path="desk-management" element={<DeskManagement />} />
                 <Route path="system-logs" element={<div className="p-4"><h2>System Logs</h2><p>System logs interface coming soon.</p></div>} />
               </Route>

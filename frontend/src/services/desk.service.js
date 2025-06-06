@@ -1,15 +1,10 @@
-import axios from 'axios';
-import AuthService from './auth.service';
-
-const API_URL = 'http://localhost:3001/api';
+import API from './api.service';
 
 const DeskService = {
   // Get all desks
   getAllDesks: async () => {
     try {
-      const response = await axios.get(`${API_URL}/desks`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get('/desks');
       
       return response.data;
     } catch (error) {
@@ -20,9 +15,7 @@ const DeskService = {
   // Get desk by id
   getDeskById: async (id) => {
     try {
-      const response = await axios.get(`${API_URL}/desks/${id}`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get(`/desks/${id}`);
       
       return response.data;
     } catch (error) {
@@ -46,9 +39,7 @@ const DeskService = {
   // Update desk
   updateDesk: async (id, deskData) => {
     try {
-      const response = await axios.put(`${API_URL}/desks/${id}`, deskData, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.put(`/desks/${id}`, deskData);
       
       return response.data;
     } catch (error) {
@@ -59,9 +50,7 @@ const DeskService = {
   // Delete desk
   deleteDesk: async (id) => {
     try {
-      const response = await axios.delete(`${API_URL}/desks/${id}`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.delete(`/desks/${id}`);
       
       return response.data;
     } catch (error) {
@@ -72,10 +61,8 @@ const DeskService = {
   // Assign agent to desk
   assignAgentToDesk: async (deskId, userId) => {
     try {
-      const response = await axios.post(`${API_URL}/desks/${deskId}/assign`, {
+      const response = await API.post(`/desks/${deskId}/assign`, {
         user_id: userId
-      }, {
-        headers: AuthService.getAuthHeader()
       });
       
       return response.data;
@@ -87,9 +74,7 @@ const DeskService = {
   // Get desks assigned to an agent
   getAgentDesks: async () => {
     try {
-      const response = await axios.get(`${API_URL}/desks/assigned`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get('/desks/assigned');
       
       return response.data;
     } catch (error) {

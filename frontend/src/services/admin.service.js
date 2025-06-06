@@ -1,16 +1,10 @@
-import axios from 'axios';
-import AuthService from './auth.service';
-import { API_URL } from '../constants'; // Assuming you have API_URL in constants.js
-
-const ADMIN_API_URL = `${API_URL}/admin`;
+import API from './api.service';
 
 const AdminService = {
   // User Management
   getAllUsers: async () => {
     try {
-      const response = await axios.get(`${ADMIN_API_URL}/users`, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.get('/admin/users');
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -19,9 +13,7 @@ const AdminService = {
 
   getUserById: async (userId) => {
     try {
-      const response = await axios.get(`${ADMIN_API_URL}/users/${userId}`, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.get(`/admin/users/${userId}`);
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -41,9 +33,7 @@ const AdminService = {
 
   updateUser: async (userId, updateData) => {
     try {
-      const response = await axios.put(`${ADMIN_API_URL}/users/${userId}`, updateData, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.put(`/admin/users/${userId}`, updateData);
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -52,9 +42,7 @@ const AdminService = {
 
   deleteUser: async (userId) => {
     try {
-      const response = await axios.delete(`${ADMIN_API_URL}/users/${userId}`, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.delete(`/admin/users/${userId}`);
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -64,9 +52,7 @@ const AdminService = {
   // Desk Management (related to users)
   getAllDesks: async () => {
     try {
-      const response = await axios.get(`${ADMIN_API_URL}/desks`, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.get('/admin/desks');
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -75,9 +61,7 @@ const AdminService = {
 
   assignUserToDesk: async (userId, deskId) => {
     try {
-      const response = await axios.post(`${ADMIN_API_URL}/desks/assign`, { userId, deskId }, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.post('/admin/desks/assign', { userId, deskId });
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -87,9 +71,7 @@ const AdminService = {
   unassignUserFromDesk: async (userId, deskId) => {
     try {
       // Backend expects userId and deskId in the body for POST for unassign
-      const response = await axios.post(`${ADMIN_API_URL}/desks/unassign`, { userId, deskId }, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.post('/admin/desks/unassign', { userId, deskId });
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
@@ -98,9 +80,7 @@ const AdminService = {
 
   getUserAssignments: async (userId) => {
     try {
-      const response = await axios.get(`${ADMIN_API_URL}/users/${userId}/assignments`, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.get(`/admin/users/${userId}/assignments`);
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;

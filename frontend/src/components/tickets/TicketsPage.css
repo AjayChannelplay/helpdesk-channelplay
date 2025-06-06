@@ -41,6 +41,10 @@
   border-left: 3px solid #007bff;
 }
 
+.ticket-item.reopened-ticket {
+  border-left: 4px solid #6f42c1;
+}
+
 .ticket-header {
   display: flex;
   justify-content: space-between;
@@ -84,6 +88,16 @@
   height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
+}
+
+/* Styles for reopened tickets */
+.ticket-item.reopened-ticket {
+  border-left: 4px solid #6f42c1;
+}
+
+/* Badge styles */
+.badge.bg-purple {
+  background-color: #6f42c1 !important;
 }
 
 .conversation-container {
@@ -146,4 +160,31 @@
 .message-item.internal .message-body {
   background-color: #fff8e6;
   border: 1px dashed #ffc107;
+}
+
+/* Info icon button styling */
+.info-icon-button {
+  cursor: pointer !important;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+  padding: 4px !important;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.info-icon-button:hover {
+  opacity: 1;
+  background-color: rgba(0, 123, 255, 0.1);
+  color: #0d6efd !important;
+}
+
+.info-icon-button:focus {
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  outline: none;
+}
+
+.info-icon-button:active {
+  transform: scale(0.95);
 }

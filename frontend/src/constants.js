@@ -1,5 +1,12 @@
+// Determine environment based on hostname
+const isProd = window.location.hostname !== 'localhost';
+
 // API URL configuration
-export const API_URL = 'http://localhost:3001/api';
+export const API_URL = isProd ? 'https://api.channelplay.in/api' : 'http://localhost:3001/api';
+
+// For debugging
+console.log('Using API URL:', API_URL);
+console.log('Environment:', isProd ? 'Production' : 'Development');
 
 // Other global constants
 export const APP_NAME = 'Helpdesk';

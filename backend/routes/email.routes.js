@@ -8,7 +8,10 @@ const multer = require('multer');
 const storage = multer.memoryStorage(); // Store files in memory
 const upload = multer({ storage: storage });
 
-// Apply authentication middleware to all routes
+// Microsoft Graph webhook notification route - no auth required for external webhooks
+router.post('/webhook/notification', express.json(), emailController.handleIncomingNotification);
+
+// Apply authentication middleware to all other routes
 router.use(authJwt.verifyToken);
 
 // Send email for a ticket
@@ -29,7 +32,13 @@ router.post('/:emailId/reply', upload.array('attachments'), emailController.repl
 // Mark email as read
 router.post('/mark-read/:emailId', emailController.markAsRead);
 
+// Resolve a ticket with feedback options
+router.post('/:emailId/resolve', emailController.resolveTicket);
+
 // Get attachment for an email
 router.get('/:emailId/attachments/:attachmentId', emailController.getAttachment);
+
+// Download attachment from S3
+router.get('/s3-download', emailController.downloadS3Attachment);
 
 module.exports = router;

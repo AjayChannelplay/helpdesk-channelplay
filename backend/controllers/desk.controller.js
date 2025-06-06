@@ -1,4 +1,58 @@
 const { supabase } = require('../config/db.config');
+const dotenv = require('dotenv');
+
+// Load environment variables
+dotenv.config();
+
+// Default Microsoft OAuth scopes
+const DEFAULT_MICROSOFT_SCOPES = [
+  'offline_access',
+  'User.Read',
+  'Mail.Read',
+  'Mail.ReadWrite',
+  'Mail.Send'
+];
+
+/**
+ * Generate Microsoft OAuth authorization URL
+ * @param {string} deskId - The desk ID
+ * @param {string} clientId - Microsoft client ID
+ * @param {string} redirectUri - OAuth redirect URI
+ * @param {string} emailHint - Optional email to pre-fill
+ * @returns {string} - Microsoft OAuth authorization URL
+ */
+const generateMicrosoftAuthUrl = (deskId, clientId, redirectUri, emailHint = null) => {
+  try {
+    // Define the scopes needed for email operations
+    const scopes = DEFAULT_MICROSOFT_SCOPES.join(' ');
+    
+    // Set up the state parameter to track the desk after callback
+    const state = JSON.stringify({ deskId });
+    
+    // Create Microsoft OAuth URL with explicit encoding of parameters
+    const params = new URLSearchParams({
+      client_id: clientId,
+      response_type: 'code',
+      redirect_uri: redirectUri,
+      scope: scopes,
+      response_mode: 'query',
+      state: state
+    });
+    
+    // Add email hint if provided
+    if (emailHint) {
+      params.append('login_hint', emailHint);
+    }
+    
+    // Construct the final URL
+    const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
+    
+    return authUrl;
+  } catch (error) {
+    console.error('Error generating Microsoft auth URL:', error);
+    return null;
+  }
+};
 
 // Get all desks with their email integration status (similar to macOS Mail app)
 exports.getAllDesks = async (req, res) => {
@@ -73,10 +127,10 @@ exports.getDeskById = async (req, res) => {
   }
 };
 
-// Create desk
+// Create desk with automatic Microsoft OAuth integration
 exports.createDesk = async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, description, email_address, provider_type = 'MICROSOFT' } = req.body;
     
     // Create desk with Supabase
     const { data: newDesk, error } = await supabase
@@ -85,6 +139,8 @@ exports.createDesk = async (req, res) => {
         { 
           name,
           description,
+          email_address,
+          provider_type,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -93,9 +149,55 @@ exports.createDesk = async (req, res) => {
     
     if (error) throw error;
     
+    // Automatically set up Microsoft OAuth credentials from environment variables
+    const clientId = process.env.MICROSOFT_CLIENT_ID;
+    const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+    const redirectUri = process.env.MICROSOFT_REDIRECT_URI || 'http://localhost:5173/api/auth/microsoft/callback';
+    
+    if (!clientId || !clientSecret) {
+      console.error('Microsoft OAuth credentials not found in environment variables');
+      return res.status(201).json({
+        message: 'Desk created successfully, but Microsoft OAuth credentials were not found in environment variables',
+        desk: newDesk[0],
+        oauthSetup: false
+      });
+    }
+    
+    // Create email integration with Microsoft OAuth credentials
+    const { data: integration, error: integrationError } = await supabase
+      .from('email_integrations')
+      .insert([
+        {
+          desk_id: newDesk[0].id,
+          provider_type: provider_type || 'MICROSOFT',
+          client_id: clientId,
+          client_secret: clientSecret,
+          email_address: email_address,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ])
+      .select();
+    
+    if (integrationError) {
+      console.error('Error setting up Microsoft OAuth credentials:', integrationError);
+      return res.status(201).json({
+        message: 'Desk created successfully, but failed to set up Microsoft OAuth credentials',
+        desk: newDesk[0],
+        oauthSetup: false,
+        error: integrationError.message
+      });
+    }
+    
+    // Calculate Microsoft authentication URL for immediate use
+    const authUrl = generateMicrosoftAuthUrl(newDesk[0].id, clientId, redirectUri, email_address);
+    
     res.status(201).json({
-      message: 'Desk created successfully',
-      desk: newDesk[0]
+      message: 'Desk created successfully with Microsoft OAuth credentials',
+      desk: newDesk[0],
+      integration: integration[0],
+      oauthSetup: true,
+      authUrl: authUrl
     });
   } catch (error) {
     console.error('Error creating desk:', error);

@@ -88,12 +88,28 @@ exports.handleMicrosoftCallback = async (req, res) => {
   console.log('===== MICROSOFT OAUTH CALLBACK =====');
   console.log('Request query params:', req.query);
   try {
-    // Get authorization code and state (desk ID) from query params
-    // Also check for createDesk parameter which indicates we should create a new desk
-    const { code, state: deskId, createDesk, deskName } = req.query;
-    
-    if (!code || !deskId) {
-      return res.status(400).json({ message: 'Authorization code and desk ID are required' });
+    // Get authorization code, state, and other optional params from query params
+    const { code, state, createDesk, deskName } = req.query;
+  
+    if (!code || !state) {
+      return res.status(400).json({ message: 'Authorization code and state are required' });
+    }
+  
+    // Parse state parameter which could be a JSON string or direct ID
+    let deskId;
+    try {
+      // Try to parse as JSON first
+      const stateObj = JSON.parse(state);
+      deskId = stateObj.deskId;
+      console.log('Parsed state as JSON:', stateObj);
+    } catch (e) {
+      // If not JSON, use directly as deskId
+      deskId = state;
+      console.log('Using state directly as deskId:', deskId);
+    }
+  
+    if (!deskId) {
+      return res.status(400).json({ message: 'Desk ID not found in state parameter' });
     }
     
     // Get the integration settings for this desk
@@ -273,12 +289,12 @@ exports.handleMicrosoftCallback = async (req, res) => {
       }
     }
     
-    // Create a success response and redirect to the ticket dashboard
+    // Create a success response and redirect to the desk management page
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     
-    // Redirect to the tickets dashboard after successful authentication
-    res.redirect(`${frontendUrl}/tickets?desk=${finalDeskId}`);
-    console.log(`Authentication successful, redirecting to tickets dashboard`);
+    // Redirect to the desk management page after successful authentication
+    res.redirect(`${frontendUrl}/admin/desk-management?success=true&deskId=${finalDeskId}`);
+    console.log(`Authentication successful, redirecting to desk management page`);
     
   } catch (error) {
     console.error('===== OAUTH CALLBACK ERROR =====');
@@ -294,7 +310,7 @@ exports.handleMicrosoftCallback = async (req, res) => {
     
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const errorMsg = encodeURIComponent(error.response?.data?.error_description || error.message || 'Unknown error');
-    res.redirect(`${frontendUrl}/admin/oauth?error=true&message=${errorMsg}`);
+    res.redirect(`${frontendUrl}/admin/desk-management?error=true&message=${errorMsg}`);
   }
 };
 
@@ -333,26 +349,26 @@ exports.getGmailAuthUrl = (req, res) => {
 // Refresh Microsoft OAuth token
 exports.refreshMicrosoftToken = async (req, res) => {
   try {
-    // Get integration ID from URL parameter or request body
-    const integrationId = req.params.integrationId || req.body.integrationId;
+    // Get desk ID from URL parameter or request body
+    const deskId = req.params.deskId || req.body.deskId;
     
-    if (!integrationId) {
-      return res.status(400).json({ message: 'Integration ID is required' });
+    if (!deskId) {
+      return res.status(400).json({ message: 'Desk ID is required', success: false });
     }
     
-    // Get the integration with its refresh token
+    // Get the integration with its refresh token by desk_id
     const { data: integration } = await supabase
       .from('email_integrations')
       .select('*')
-      .eq('id', integrationId)
+      .eq('desk_id', deskId)
       .single();
     
     if (!integration) {
-      return res.status(404).json({ message: 'Integration not found' });
+      return res.status(404).json({ message: 'Integration not found for this desk', success: false });
     }
     
     if (!integration.refresh_token) {
-      return res.status(400).json({ message: 'No refresh token available' });
+      return res.status(400).json({ message: 'No refresh token available', success: false });
     }
     
     // Refresh the token using the refresh token flow (exactly as outlined)
@@ -373,19 +389,29 @@ exports.refreshMicrosoftToken = async (req, res) => {
     expiresAt.setSeconds(expiresAt.getSeconds() + refreshed.data.expires_in);
     
     // Update tokens in database
-    await supabase
+    const { error: updateError } = await supabase
       .from('email_integrations')
       .update({
         access_token: refreshed.data.access_token,
         refresh_token: refreshed.data.refresh_token || integration.refresh_token, // Some flows don't return a new refresh token
         token_expires_at: expiresAt.toISOString(),
-        last_updated: new Date().toISOString()
+        updated_at: new Date().toISOString()
       })
-      .eq('id', integrationId);
+      .eq('desk_id', deskId);
+    
+    if (updateError) {
+      console.error('Error updating integration:', updateError);
+      return res.status(500).json({
+        message: 'Failed to update integration with new tokens',
+        error: updateError.message,
+        success: false
+      });
+    }
     
     res.status(200).json({
       message: 'Token refreshed successfully',
-      expiresAt: expiresAt.toISOString()
+      expiresAt: expiresAt.toISOString(),
+      success: true
     });
   } catch (error) {
     console.error('Token refresh error:', error.response?.data || error.message);

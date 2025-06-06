@@ -38,6 +38,10 @@ const TicketsPage = () => {
   const [conversation, setConversation] = useState([]);
   const [replyText, setReplyText] = useState('');
   
+  // Auto-refresh settings
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [refreshInterval, setRefreshInterval] = useState(30); // seconds
+  
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -55,10 +59,15 @@ const TicketsPage = () => {
   
   // Toggle message details visibility
   const toggleMessageDetails = (messageId) => {
-    setExpandedMessages(prev => ({
-      ...prev,
-      [messageId]: !prev[messageId]
-    }));
+    console.log('Toggle message details for:', messageId);
+    setExpandedMessages(prev => {
+      const newState = {
+        ...prev,
+        [messageId]: !prev[messageId]
+      };
+      console.log('Updated expanded messages state:', newState);
+      return newState;
+    });
   };
   
   // Get user info from auth service on component mount only
@@ -69,17 +78,6 @@ const TicketsPage = () => {
       if (user) {
         console.log('[TicketsPage] Initial userInfo from localStorage:', user);
         setUserInfo(user);
-      }
-      
-      // Load resolved emails from localStorage
-      try {
-        const storedResolvedEmails = JSON.parse(localStorage.getItem('resolvedEmails') || '[]');
-        console.log('[TicketsPage] Loaded resolved emails from localStorage:', storedResolvedEmails);
-        setResolvedEmails(storedResolvedEmails);
-      } catch (e) {
-        console.error('Error loading resolved emails from localStorage:', e);
-        // If there's an error, initialize with empty array
-        setResolvedEmails([]);
       }
     } catch (err) {
       console.error('Error getting user info:', err);
@@ -103,6 +101,45 @@ const TicketsPage = () => {
       return normalizedDesk;
     }).filter(Boolean); // Remove any null entries
   }, []);
+
+  const handleS3Download = async (attachment, messageDeskId) => {
+    if (!attachment || !attachment.s3Key) {
+      console.error('Invalid attachment object for S3 download:', attachment);
+      setError('Cannot download: Invalid attachment data.'); // Assuming setError is a state setter
+      return;
+    }
+    // Use message.desk_id if available, otherwise fallback to selectedDeskId from component state
+    const deskIdToUse = messageDeskId || selectedDeskId; 
+
+    if (!deskIdToUse) {
+      console.error('Missing desk_id for S3 download. messageDeskId:', messageDeskId, 'selectedDeskId:', selectedDeskId);
+      setError('Cannot download: Desk ID is missing.'); // Assuming setError is a state setter
+      return;
+    }
+
+    console.log(`Attempting to download S3 attachment: ${attachment.name} (Key: ${attachment.s3Key}) for desk: ${deskIdToUse}`);
+    setSending(true); // Assuming setSending is a state setter
+    setError(null);
+    try {
+      // This EmailService.downloadS3Attachment method will need to be created
+      const blob = await EmailService.downloadS3Attachment(attachment.s3Key, deskIdToUse);
+      
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', attachment.name || 'downloaded_file'); 
+      document.body.appendChild(link);
+      link.click();
+      
+      URL.revokeObjectURL(link.href);
+      document.body.removeChild(link);
+      setSending(false);
+    } catch (err) {
+      console.error('Error downloading S3 attachment:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Server error during download.';
+      setError(`Download failed: ${errorMessage}`);
+      setSending(false);
+    }
+  };
 
   // Effect to handle desk fetching - runs only when userInfo changes
   useEffect(() => {
@@ -210,186 +247,397 @@ const TicketsPage = () => {
 
   // Effect for when selectedDeskId changes - fetch tickets and emails
   useEffect(() => {
-    // Reset states when selectedDeskId changes or becomes null to clear previous desk's data
-    console.log('[TicketsPage] selectedDeskId changed to:', selectedDeskId, "Resetting ticket states."); // DEBUG LOG
+    console.log('Selected desk changed to:', selectedDeskId);
     setTickets([]);
     setSelectedTicket(null);
     setConversation([]);
-    // setError(null); // Clear general errors, or handle more specifically
-    // setSuccess(null);
-
-    if (selectedDeskId) {
-      setLoading(true); // Indicate loading for the new desk's data
-      fetchTickets();
-      if (showAllEmails) {
-        fetchAllEmails();
-      } else {
-        fetchUnreadEmails();
-      }
-    } else {
-      setLoading(false); // No desk selected, nothing to load
-    }
-  }, [selectedDeskId, showAllEmails]);
-  
-  // Fetch tickets
-  const fetchTickets = async () => {
-    if (!selectedDeskId) {
-      setTickets([]);
-      setLoading(false); // Ensure loading is false if no desk is selected
-      // setError('No desk selected or you do not have access to any desks.'); // Optional: provide a message
-      return;
-    }
-    try {
-      setLoading(true);
-      const response = await TicketService.getTickets({ deskId: selectedDeskId });
-      setTickets(response.data || []);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching tickets:', err);
-      setError('Failed to load tickets. ' + (err.response?.data?.message || 'Please try again.'));
-      setTickets([]);
-      setLoading(false);
-    }
-  };
-  
-  // Fetch unread emails
-  const fetchUnreadEmails = async () => {
-    try {
-      setRefreshing(true);
-      if (!selectedDeskId) {
-        console.log('No desk selected, skipping unread emails fetch');
-        setUnreadEmails([]);
-        setRefreshing(false);
-        return;
-      }
-      
-      console.log('Fetching unread emails for desk:', selectedDeskId);
-      const response = await EmailService.fetchUnreadEmails(selectedDeskId);
-      console.log('Unread emails response:', response);
-      
-      // Handle both response formats for backward compatibility
-      const emails = Array.isArray(response) ? response : 
-                    (response.data && Array.isArray(response.data)) ? response.data : [];
-      
-      setUnreadEmails(emails);
-      setRefreshing(false);
-    } catch (err) {
-      console.error('Error fetching unread emails:', err);
-      setUnreadEmails([]);
-      setRefreshing(false);
-      setError('Failed to load unread emails. Please try again.');
-    }
-  };
-  
-  // Fetch all emails (both read and unread) with conversation history
-  const fetchAllEmails = async () => {
-    try {
-      setRefreshing(true);
-      if (!selectedDeskId) {
-        console.log('No desk selected, skipping all emails fetch');
-        setAllEmails([]);
-        setRefreshing(false);
-        return;
-      }
-      
-      console.log('Fetching all emails for desk:', selectedDeskId);
-      const response = await EmailService.fetchAllEmails(selectedDeskId);
-      console.log('All emails response:', response);
-      
-      // Handle both response formats for backward compatibility
-      const conversations = Array.isArray(response) ? response : 
-                           (response.data && Array.isArray(response.data)) ? response.data : [];
-      
-      console.log('Processed conversations:', conversations.length);
-      setAllEmails(conversations);
-      setRefreshing(false);
-    } catch (err) {
-      console.error('Error fetching all emails:', err);
-      setAllEmails([]);
-      setRefreshing(false);
-      setError('Failed to load all emails. Please try again.');
-    }
-  };
-  
-  // Handle refresh button click
-  const handleRefresh = () => {
-    fetchTickets();
-    if (showAllEmails) {
-      fetchAllEmails();
-    } else {
-      fetchUnreadEmails();
-    }
-  };
-  
-  // Load conversation when ticket is selected
-  useEffect(() => {
-    const loadConversation = async () => {
-      if (!selectedTicket) return;
-      
+    
+    if (!selectedDeskId) return;
+    
+    // Set a loading state to show spinner while initial load happens
+    setLoading(true);
+    
+    // Create a flag to track if component is still mounted
+    let isMounted = true;
+    
+    const loadInitialData = async () => {
       try {
-        setLoading(true);
-        setError(null); // Clear any previous errors
-        console.log('Selected ticket changed:', selectedTicket);
+        // Fetch tickets and emails in parallel
+        const promises = [];
         
-        // For email conversations, use the messages array that was already fetched
-        if (selectedTicket.id && selectedTicket.id.toString().startsWith('email-') && selectedTicket.messages) {
-          console.log('Using existing conversation messages:', selectedTicket.messages.length);
-          setConversation(selectedTicket.messages);
-        }
-        // For regular tickets, fetch conversation from server
-        else if (selectedTicket.id && !selectedTicket.id.toString().startsWith('email-')) {
-          const ticketId = selectedTicket.id;
-          console.log('Fetching conversation for ticket ID:', ticketId);
-          
-          const conversationData = await EmailService.fetchConversation(ticketId);
-          console.log('Conversation data received:', conversationData);
-          
-          // Ensure we have an array of conversation messages
-          if (conversationData) {
-            const messageArray = Array.isArray(conversationData) ? conversationData : 
-                              (conversationData.data ? conversationData.data : []);
-            
-            // Process messages to handle complex objects
-            const processedMessages = messageArray.map(message => {
-              // Handle complex from object from Microsoft Graph API
-              if (message.from && typeof message.from === 'object' && message.from.emailAddress) {
-                return {
-                  ...message,
-                  fromName: message.from.emailAddress.name || message.from.emailAddress.address
-                };
-              }
-              return message;
-            });
-            
-            setConversation(processedMessages);
-          } else {
-            setConversation([]);
-          }
+        // Fetch tickets
+        promises.push(
+          TicketService.getTickets(selectedDeskId)
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setTickets(data);
+              console.log('Initial tickets loaded:', data?.length || 0);
+            })
+            .catch(err => console.error('Error loading initial tickets:', err))
+        );
+        
+        // Fetch emails based on view preference
+        if (showAllEmails) {
+          promises.push(
+            EmailService.fetchEmails(selectedDeskId, 'open')
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) {
+                  setAllEmails(data);
+                  setUnreadEmails(data.filter(email => !email.isRead));
+                }
+                console.log('Initial all emails loaded:', data?.length || 0);
+              })
+              .catch(err => console.error('Error loading initial all emails:', err))
+          );
         } else {
-          // For individual email previews without conversation data
-          console.log('Email preview selected without messages array');
-          setConversation([]);
+          promises.push(
+            EmailService.fetchUnreadEmails(selectedDeskId)
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) setUnreadEmails(data);
+                console.log('Initial unread emails loaded:', data?.length || 0);
+              })
+              .catch(err => console.error('Error loading initial unread emails:', err))
+          );
         }
         
-        setLoading(false);
+        // Fetch closed emails
+        promises.push(
+          EmailService.fetchEmails(selectedDeskId, 'closed')
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setResolvedEmails(data);
+              console.log('Initial closed emails loaded:', data?.length || 0);
+            })
+            .catch(err => console.error('Error loading initial closed emails:', err))
+        );
         
-        // Scroll to bottom of conversation
-        setTimeout(() => {
-          if (messagesEndRef.current) {
-            console.log('Scrolling to bottom of conversation');
-            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-          }
-        }, 100);
+        // Wait for all requests to complete
+        await Promise.all(promises);
+        
+        if (isMounted) {
+          setLoading(false);
+        }
       } catch (err) {
-        console.error('Error fetching conversation:', err);
-        setConversation([]);
-        setLoading(false);
-        setError('Failed to load conversation. Please try again.');
+        console.error('Error in loadInitialData:', err);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
     
-    loadConversation();
-  }, [selectedTicket]);
+    loadInitialData();
+    
+    // Cleanup function
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDeskId, showAllEmails]);
+
+  // Fetch tickets
+  const fetchTickets = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const ticketsData = await TicketService.getTickets(selectedDeskId);
+      console.log('Tickets data:', ticketsData);
+      // Only update tickets if we received valid data
+      if (Array.isArray(ticketsData)) {
+        setTickets(ticketsData);
+      } else {
+        console.warn('Invalid tickets data received:', ticketsData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching tickets:', err);
+      setLoading(false);
+      // Keep previous tickets state on error
+    }
+  };
+
+  // Fetch unread emails based on desk ID
+  const fetchUnreadEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const unreadData = await EmailService.fetchUnreadEmails(selectedDeskId);
+      console.log('Unread emails data:', unreadData);
+      // Only update if we got valid data
+      if (Array.isArray(unreadData)) {
+        setUnreadEmails(unreadData);
+      } else {
+        console.warn('Invalid unread emails data received:', unreadData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching unread emails:', err);
+      setLoading(false);
+      // Keep previous unread emails state on error
+    }
+  };
+
+  // Fetch all emails based on desk ID
+  const fetchAllEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      setLoading(true);
+      const emailsData = await EmailService.fetchEmails(selectedDeskId, 'open');
+      console.log('All emails data:', emailsData);
+      // Only update if we got valid data
+      if (Array.isArray(emailsData)) {
+        setAllEmails(emailsData);
+        // Also update unread emails in case they changed
+        setUnreadEmails(emailsData.filter(email => !email.isRead));
+      } else {
+        console.warn('Invalid emails data received:', emailsData);
+        // Keep previous state
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching all emails:', err);
+      setLoading(false);
+      // Keep previous emails state on error
+    }
+  };
+
+  // Fetch closed emails with status='closed'
+  const fetchClosedEmails = async () => {
+    if (!selectedDeskId) return;
+    
+    try {
+      const closedEmailsData = await EmailService.fetchEmails(selectedDeskId, 'closed');
+      console.log('Closed emails data:', closedEmailsData);
+      // Only update if we got valid data
+      if (Array.isArray(closedEmailsData)) {
+        setResolvedEmails(closedEmailsData);
+      } else {
+        console.warn('Invalid closed emails data received:', closedEmailsData);
+        // Keep previous state
+      }
+    } catch (err) {
+      console.error('Error fetching closed emails:', err);
+      // Keep previous resolved emails state on error
+    }
+  };
+
+  // Handle refresh button click
+  const handleRefresh = useCallback(() => {
+    console.log('[TicketsPage] Manual refresh triggered');
+    
+    // Show loading spinner for manual refresh
+    setLoading(true);
+    
+    // Create a flag to track if component is still mounted
+    let isMounted = true;
+    
+    const refreshAllData = async () => {
+      try {
+        // Fetch tickets and emails in parallel for better performance
+        const promises = [];
+        
+        // Fetch tickets
+        promises.push(
+          TicketService.getTickets(selectedDeskId)
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setTickets(data);
+              console.log('Tickets refreshed:', data?.length || 0);
+            })
+            .catch(err => console.error('Error refreshing tickets:', err))
+        );
+        
+        // Fetch emails based on view preference
+        if (showAllEmails) {
+          promises.push(
+            EmailService.fetchEmails(selectedDeskId, 'open')
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) {
+                  setAllEmails(data);
+                  setUnreadEmails(data.filter(email => !email.isRead));
+                }
+                console.log('All emails refreshed:', data?.length || 0);
+              })
+              .catch(err => console.error('Error refreshing all emails:', err))
+          );
+        } else {
+          promises.push(
+            EmailService.fetchUnreadEmails(selectedDeskId)
+              .then(data => {
+                if (!isMounted) return;
+                if (Array.isArray(data)) setUnreadEmails(data);
+                console.log('Unread emails refreshed:', data?.length || 0);
+              })
+              .catch(err => console.error('Error refreshing unread emails:', err))
+          );
+        }
+        
+        // Fetch closed emails
+        promises.push(
+          EmailService.fetchEmails(selectedDeskId, 'closed')
+            .then(data => {
+              if (!isMounted) return;
+              if (Array.isArray(data)) setResolvedEmails(data);
+              console.log('Closed emails refreshed:', data?.length || 0);
+            })
+            .catch(err => console.error('Error refreshing closed emails:', err))
+        );
+        
+        // Wait for all requests to complete
+        await Promise.all(promises);
+        
+        if (isMounted) {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Error in refreshAllData:', err);
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+    
+    // Only proceed if we have a selected desk
+    if (selectedDeskId) {
+      refreshAllData();
+    } else {
+      setLoading(false);
+    }
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDeskId, showAllEmails]);
+
+  // Auto-refresh functionality for tickets and emails
+  useEffect(() => {
+    if (!autoRefreshEnabled || !selectedDeskId) return;
+    
+    console.log(`[TicketsPage] Setting up auto-refresh interval: ${refreshInterval} seconds`);
+    
+    // Initial load when component mounts or selectedDeskId changes is now done separately
+    // to avoid race conditions. Don't call handleRefresh() here as it might lead to state inconsistencies.
+    
+    // Set up interval for auto-refresh
+    const intervalId = setInterval(() => {
+      console.log('[TicketsPage] Auto-refresh triggered');
+      // Instead of handleRefresh(), call individual fetch functions to better handle errors
+      fetchTickets().catch(err => {
+        console.error('[Auto-refresh] Error refreshing tickets:', err);
+        // Don't update loading state or error state for auto-refresh errors
+      });
+      
+      // Fetch emails based on current view
+      if (showAllEmails) {
+        fetchAllEmails().catch(err => {
+          console.error('[Auto-refresh] Error refreshing all emails:', err);
+        });
+      } else {
+        fetchUnreadEmails().catch(err => {
+          console.error('[Auto-refresh] Error refreshing unread emails:', err);
+        });
+      }
+      
+      // Fetch closed emails too
+      fetchClosedEmails().catch(err => {
+        console.error('[Auto-refresh] Error refreshing closed emails:', err);
+      });
+    }, refreshInterval * 1000);
+    
+    // Clean up interval on component unmount
+    return () => {
+      console.log('[TicketsPage] Cleaning up auto-refresh interval');
+      clearInterval(intervalId);
+    };
+  }, [selectedDeskId, autoRefreshEnabled, refreshInterval, showAllEmails, fetchTickets, fetchAllEmails, fetchUnreadEmails, fetchClosedEmails]);
+
+  // Create a fetchConversationData function that can be called both initially and for auto-refresh
+  const fetchConversationData = useCallback(async (ticket) => {
+    if (!ticket) return;
+    
+    try {
+      setLoading(true);
+      setError(null); // Clear any previous errors
+      console.log('Fetching conversation data for ticket:', ticket.id);
+      
+      // For email conversations, use the messages array that was already fetched
+      if (ticket.id && ticket.id.toString().startsWith('email-') && ticket.messages) {
+        console.log('Using existing conversation messages:', ticket.messages.length);
+        setConversation(ticket.messages);
+      }
+      // For regular tickets, fetch conversation from server
+      else if (ticket.id && !ticket.id.toString().startsWith('email-')) {
+        const ticketId = ticket.id;
+        console.log('Fetching conversation for ticket ID:', ticketId);
+        
+        const conversationData = await EmailService.fetchConversation(ticketId);
+        console.log('Conversation data received:', conversationData);
+        
+        // Ensure we have an array of conversation messages
+        if (conversationData) {
+          const messageArray = Array.isArray(conversationData) ? conversationData : 
+                            (conversationData.data ? conversationData.data : []);
+          
+          // Process messages to handle complex objects
+          const processedMessages = messageArray.map(message => {
+            // Handle complex from object from Microsoft Graph API
+            if (message.from && typeof message.from === 'object' && message.from.emailAddress) {
+              return {
+                ...message,
+                fromName: message.from.emailAddress.name || message.from.emailAddress.address
+              };
+            }
+            return message;
+          });
+          
+          setConversation(processedMessages);
+        } else {
+          setConversation([]);
+        }
+      }
+      
+      setLoading(false);
+      
+      // Scroll to bottom of conversation automatically
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 300);
+    } catch (error) {
+      console.error('Error loading conversation:', error);
+      setError('Failed to load conversation. ' + (error.response?.data?.message || 'Please try again.'));
+      setLoading(false);
+    }
+  }, []);
+  
+  // Initial load of conversation when ticket is selected
+  useEffect(() => {
+    fetchConversationData(selectedTicket);
+  }, [selectedTicket, fetchConversationData]);
+  
+  // Auto-refresh for conversation
+  useEffect(() => {
+    if (!autoRefreshEnabled || !selectedTicket) return;
+    
+    console.log(`[TicketsPage] Setting up conversation auto-refresh: ${refreshInterval} seconds`);
+    
+    const intervalId = setInterval(() => {
+      console.log('[TicketsPage] Auto-refreshing conversation');
+      fetchConversationData(selectedTicket);
+    }, refreshInterval * 1000);
+    
+    return () => {
+      console.log('[TicketsPage] Cleaning up conversation auto-refresh');
+      clearInterval(intervalId);
+    };
+  }, [selectedTicket, autoRefreshEnabled, refreshInterval, fetchConversationData]);
 
   // Handle sending a reply to a ticket or email
   const handleSendReply = async () => {
@@ -468,7 +716,7 @@ const TicketsPage = () => {
         console.log('Attachments sent for ticket reply:', attachments.length > 0 ? attachments.map(file => file.name).join(', ') : 'None');
         
         // Refresh conversation
-        fetchConversation(selectedTicket.id);
+        fetchConversationData(selectedTicket);
         setReplyText('');
         setSuccess('Reply sent successfully!');
         setAttachments([]); // Clear attachments after successful send
@@ -512,41 +760,59 @@ const TicketsPage = () => {
       setSending(true);
       setError(null); // Clear any previous errors
       
+      // Store the conversation ID before resolution to properly track the thread
+      let conversationId = null;
+      if (selectedTicket && selectedTicket.conversationId) {
+        conversationId = selectedTicket.conversationId;
+        console.log(`Resolving ticket in conversation: ${conversationId}`);
+      } else {
+        // Try to find the conversation ID from all emails
+        const emailToResolve = allEmails.find(email => 
+          email.messages && email.messages.some(msg => msg.id === emailId));
+        if (emailToResolve) {
+          conversationId = emailToResolve.id;
+          console.log(`Found conversation ID from emails list: ${conversationId}`);
+        }
+      }
+      
+      // Send the resolution email
       const response = await EmailService.sendResolutionEmail(emailId, selectedDeskId);
       console.log('Resolution email response:', response);
       
-      // Find the email in allEmails that matches this emailId
-      const emailToResolve = allEmails.find(email => {
-        // Check if it's a direct match on ID
-        if (email.id === emailId) return true;
-        // Or if it's a conversation with this message
-        if (email.latestMessageId === emailId) return true;
-        return false;
-      });
+      // After successful resolution, wait a moment for database updates to complete
+      console.log('Waiting for database updates to complete...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
-      if (emailToResolve) {
-        // Add the resolved email to the resolved list
-        setResolvedEmails(prev => [...prev, {
-          ...emailToResolve,
-          resolvedAt: new Date().toISOString()
-        }]);
+      // After delay, re-fetch emails from the backend
+      console.log('Re-fetching emails after resolution...');
+      
+      try {
+        // Fetch closed emails FIRST - this is important for proper UI update
+        const closedEmailsResponse = await EmailService.fetchEmails(selectedDeskId, 'closed');
+        console.log('Fetched closed emails:', closedEmailsResponse);
         
-        // Store in localStorage to persist resolved status
-        const storedResolvedEmails = JSON.parse(localStorage.getItem('resolvedEmails') || '[]');
-        localStorage.setItem('resolvedEmails', JSON.stringify([
-          ...storedResolvedEmails,
-          {
-            id: emailToResolve.id,
-            resolvedAt: new Date().toISOString()
-          }
-        ]));
+        // Important: check if the resolved thread is now in closed emails
+        if (conversationId) {
+          const threadInClosedEmails = closedEmailsResponse.some(email => email.id === conversationId);
+          console.log(`Is conversation ${conversationId} now in closed emails? ${threadInClosedEmails}`);
+        }
+        
+        // Update resolved emails list with data from backend
+        setResolvedEmails(closedEmailsResponse);
+        
+        // Fetch open emails (using the new status parameter)
+        const openEmailsResponse = await EmailService.fetchEmails(selectedDeskId, 'open');
+        console.log('Fetched open emails:', openEmailsResponse);
+        
+        // Update the UI with fresh data from the backend
+        setAllEmails(openEmailsResponse);
+        setUnreadEmails(openEmailsResponse.filter(email => !email.isRead));
+      } catch (fetchError) {
+        console.error('Error re-fetching emails after resolution:', fetchError);
       }
       
-      // Remove the email from unread emails list
-      setUnreadEmails(unreadEmails.filter(email => email.id !== emailId));
-      
       // Show success message
-      setSuccess('Resolution email sent successfully!');
+      setSuccess('Email resolved successfully!');
       setTimeout(() => setSuccess(null), 3000);
       
       setSending(false);
@@ -576,7 +842,7 @@ const TicketsPage = () => {
       setError('Failed to update ticket status. ' + (err.response?.data?.message || 'Please try again.'));
     }
   };
-  
+
   return (
     <div className="tickets-container">
       <Row>
@@ -611,7 +877,11 @@ const TicketsPage = () => {
                 <Form.Select 
                   size="sm" 
                   value={emailStatusFilter}
-                  onChange={(e) => setEmailStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    console.log('Email status filter changed to:', e.target.value);
+                    console.log('Current resolved emails count:', resolvedEmails.length);
+                    setEmailStatusFilter(e.target.value);
+                  }}
                   className="mx-2"
                   style={{ width: 'auto' }}
                 >
@@ -670,16 +940,37 @@ const TicketsPage = () => {
                                   from: email.fromName || (email.from?.emailAddress?.name || email.from?.emailAddress?.address),
                                   preview: email.preview,
                                   created: new Date(email.receivedDateTime).toLocaleDateString(),
-                                  time: new Date(email.receivedDateTime).toLocaleTimeString(),
+                                  time: (() => {
+                                    const dateObj = new Date(email.receivedDateTime);
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
+                                      ? new Date().toLocaleTimeString()
+                                      : dateObj.toLocaleTimeString();
+                                  })(),
                                   isEmail: true,
                                   emailId: email.id
                                 };
+                                // Mark email as read when opened
+                                EmailService.markAsRead(email.id, selectedDeskId)
+                                  .then(() => {
+                                    console.log(`Marked email ${email.id} as read`);
+                                    // Update the unreadEmails list by removing this email
+                                    setUnreadEmails(prev => prev.filter(e => e.id !== email.id));
+                                  })
+                                  .catch(err => console.error('Error marking email as read:', err));
                                 setSelectedTicket(newTicket);
                               }}
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{email.subject}</div>
-                                <small className="ticket-time">{new Date(email.receivedDateTime).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(email.receivedDateTime);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{email.fromName || email.from}</small>
@@ -694,31 +985,20 @@ const TicketsPage = () => {
                       )}
                       
                       {/* All Emails Section (grouped by conversation) */}
-                      {showAllEmails && allEmails.length > 0 && (
+                      {showAllEmails && (emailStatusFilter === 'open' ? allEmails.length > 0 : resolvedEmails.length > 0) && (
                         <div className="ticket-section">
                           <div className="ticket-section-header">
                             <small>
                               <FaEnvelope className="me-1" /> 
                               {emailStatusFilter === 'open' ? 'Open' : 'Closed'} Email Conversations 
                               {emailStatusFilter === 'open' ? 
-                                `(${allEmails.filter(email => !resolvedEmails.some(resolved => 
-                                  resolved.id === email.id || resolved.id === email.latestMessageId
-                                )).length})` : 
+                                `(${allEmails.length})` : 
                                 `(${resolvedEmails.length})`
                               }
                             </small>
                           </div>
-                          {allEmails
-                            .filter(email => {
-                              // Check if this email is in the resolvedEmails list
-                              const isResolved = resolvedEmails.some(resolved => 
-                                resolved.id === email.id || resolved.id === email.latestMessageId
-                              );
-                              
-                              // For 'open' filter, show emails that are NOT resolved
-                              // For 'closed' filter, show emails that ARE resolved
-                              return emailStatusFilter === 'open' ? !isResolved : isResolved;
-                            })
+                          {/* For Open emails, show from allEmails, for Closed emails show from resolvedEmails */}
+                          {(emailStatusFilter === 'open' ? allEmails : resolvedEmails)
                             .map(conversation => (
                             <div 
                               key={conversation.id} 
@@ -730,13 +1010,40 @@ const TicketsPage = () => {
                                   from: conversation.fromName,
                                   preview: conversation.preview,
                                   created: new Date(conversation.receivedDateTime).toLocaleDateString(),
-                                  time: new Date(conversation.receivedDateTime).toLocaleTimeString(),
+                                  time: (() => {
+                                    const dateObj = new Date(conversation.receivedDateTime);
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
+                                      ? new Date().toLocaleTimeString()
+                                      : dateObj.toLocaleTimeString();
+                                  })(),
                                   isEmail: true,
                                   emailId: conversation.latestMessageId,
                                   conversationId: conversation.id,
                                   messages: conversation.messages,
                                   messageCount: conversation.messageCount || 1
                                 };
+                                // Mark conversation as read when opened if it has unread messages
+                                if (conversation.hasUnread) {
+                                  EmailService.markAsRead(conversation.latestMessageId, selectedDeskId)
+                                    .then(() => {
+                                      console.log(`Marked conversation ${conversation.id} as read`);
+                                      // Update the allEmails or resolvedEmails list to remove the unread marker
+                                      const updatedConversations = (emailStatusFilter === 'open' ? [...allEmails] : [...resolvedEmails])
+                                        .map(conv => {
+                                          if (conv.id === conversation.id) {
+                                            return {...conv, hasUnread: false};
+                                          }
+                                          return conv;
+                                        });
+                                      
+                                      if (emailStatusFilter === 'open') {
+                                        setAllEmails(updatedConversations);
+                                      } else {
+                                        setResolvedEmails(updatedConversations);
+                                      }
+                                    })
+                                    .catch(err => console.error('Error marking conversation as read:', err));
+                                }
                                 setSelectedTicket(newTicket);
                               }}
                             >
@@ -747,7 +1054,15 @@ const TicketsPage = () => {
                                     <Badge bg="secondary" className="ms-2" pill>{conversation.messageCount}</Badge>
                                   )}
                                 </div>
-                                <small className="ticket-time">{new Date(conversation.receivedDateTime).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(conversation.receivedDateTime);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{conversation.fromName}</small>
@@ -770,23 +1085,56 @@ const TicketsPage = () => {
                           {tickets.map(ticket => (
                             <div 
                               key={ticket.id} 
-                              className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''}`}
-                              onClick={() => setSelectedTicket(ticket)}
+                              className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
+                              onClick={() => {
+                                // For regular tickets, mark as read if status is 'new'
+                                if (ticket.status === 'new') {
+                                  TicketService.updateTicket(ticket.id, { status: 'open' })
+                                    .then(() => {
+                                      console.log(`Updated ticket ${ticket.id} status from new to open`);
+                                      // Update the local tickets array to reflect the status change
+                                      setTickets(prev => prev.map(t => {
+                                        if (t.id === ticket.id) {
+                                          return {...t, status: 'open'};
+                                        }
+                                        return t;
+                                      }));
+                                    })
+                                    .catch(err => console.error('Error updating ticket status:', err));
+                                }
+                                setSelectedTicket(ticket);
+                              }}
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{ticket.subject}</div>
-                                <small className="ticket-time">{new Date(ticket.created_at).toLocaleTimeString()}</small>
+                                <small className="ticket-time">{
+                                  (() => {
+                                    const dateObj = new Date(ticket.created_at);
+                                    // Check if hours, minutes, seconds are all zero
+                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                      ? new Date().toLocaleTimeString() 
+                                      : dateObj.toLocaleTimeString();
+                                  })()
+                                }</small>
                               </div>
                               <div className="ticket-info">
-                                <small className="ticket-customer">{ticket.customer_email}</small>
-                                <Badge 
-                                  bg={ticket.status === 'new' ? 'info' : 
-                                     ticket.status === 'open' ? 'success' : 
-                                     ticket.status === 'closed' ? 'secondary' : 'warning'} 
-                                  pill
-                                >
-                                  {ticket.status}
-                                </Badge>
+                                <small className="ticket-customer">{ticket.customer_email || ticket.email}</small>
+                                <div>
+                                  <Badge 
+                                    bg={ticket.status === 'new' ? 'info' : 
+                                       ticket.status === 'open' ? 'success' : 
+                                       ticket.status === 'closed' ? 'secondary' : 'warning'} 
+                                    pill
+                                    className="me-1"
+                                  >
+                                    {ticket.status}
+                                  </Badge>
+                                  {ticket.reopened_from_closed && (
+                                    <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
+                                      Reopened
+                                    </Badge>
+                                  )}
+                                </div>
                               </div>
                               <div className="ticket-message">
                                 <small>{ticket.description?.substring(0, 60)}...</small>
@@ -831,8 +1179,20 @@ const TicketsPage = () => {
                     <FaRegCalendarAlt className="mx-1" /> {
                       (() => {
                         try {
-                          return new Date(selectedTicket.created_at || selectedTicket.created || Date.now()).toLocaleString();
+                          // Make sure the date object is properly created with time information
+                          const timestamp = selectedTicket.created_at || selectedTicket.created || Date.now();
+                          const dateObj = new Date(timestamp);
+                          // Check if the timestamp is valid and has proper time values
+                          const isTimeValid = !isNaN(dateObj.getTime()) && 
+                                            !(dateObj.getHours() === 0 && 
+                                              dateObj.getMinutes() === 0 && 
+                                              dateObj.getSeconds() === 0);
+                          
+                          // Use the current time if time component is zeroed out (00:00:00)
+                          const displayDate = isTimeValid ? dateObj : new Date();
+                          return displayDate.toLocaleString();
                         } catch (e) {
+                          console.error('Error formatting date:', e);
                           return new Date().toLocaleString();
                         }
                       })()
@@ -847,6 +1207,15 @@ const TicketsPage = () => {
                     onClick={handleRefresh}
                   >
                     <FaSyncAlt className="me-1" /> Refresh
+                  </Button>
+                  
+                  <Button 
+                    variant={autoRefreshEnabled ? "outline-success" : "outline-secondary"}
+                    size="sm" 
+                    className="me-2"
+                    onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                  >
+                    <FaSyncAlt className="me-1" /> {autoRefreshEnabled ? 'Auto: ON' : 'Auto: OFF'}
                   </Button>
                   
                   {selectedTicket.isEmail ? (
@@ -946,7 +1315,14 @@ const TicketsPage = () => {
                                 <small className="me-2">
                                   {(() => {
                                     try {
-                                      return message.receivedDateTime ? new Date(message.receivedDateTime).toLocaleString() : 'Unknown time';
+                                      if (!message.receivedDateTime) return 'Unknown time';
+                                      const dateObj = new Date(message.receivedDateTime);
+                                      // Check if hours, minutes, seconds are all zero
+                                      if (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) {
+                                        return new Date().toLocaleString();
+                                      } else {
+                                        return dateObj.toLocaleString();
+                                      }
                                     } catch (e) {
                                       return new Date().toLocaleString();
                                     }
@@ -955,8 +1331,14 @@ const TicketsPage = () => {
                                 <Button 
                                   variant="link" 
                                   size="sm" 
-                                  className="p-0 text-muted" 
-                                  onClick={() => toggleMessageDetails(message.id || `msg-${index}`)}
+                                  className="p-0 text-muted info-icon-button" 
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const msgId = message.id || `msg-${index}`;
+                                    console.log('Info icon clicked for message:', msgId);
+                                    toggleMessageDetails(msgId);
+                                  }}
                                   title="Show/Hide Details"
                                 >
                                   {expandedMessages[message.id || `msg-${index}`] ? <FaAngleUp /> : <FaInfoCircle />}
@@ -972,14 +1354,17 @@ const TicketsPage = () => {
                                 <p>No message content</p>
                               )}
                               
-                              {/* Display attachments if any */}
-                              {message.hasAttachments && message.attachments && message.attachments.length > 0 && (
+                              {/* Display attachments section - handles both Microsoft Graph attachments and S3 attachments */}
+                              {(message.hasAttachments || (message.attachments_urls && message.attachments_urls.length > 0)) && (
                                 <div className="message-attachments mt-3">
                                   <div className="attachments-header mb-2">
-                                    <FaPaperclip className="me-1" /> Attachments ({message.attachments.length})
+                                    <FaPaperclip className="me-1" /> Attachments
+                                    {message.attachments && message.attachments.length > 0 && <span> ({message.attachments.length})</span>}
+                                    {message.attachments_urls && message.attachments_urls.length > 0 && <span> ({message.attachments_urls.length})</span>}
                                   </div>
                                   <div className="attachments-list">
-                                    {message.attachments.map((attachment, i) => {
+                                    {/* Handle Microsoft Graph attachments */}
+                                    {message.attachments && message.attachments.length > 0 && message.attachments.map((attachment, i) => {
                                       // Determine icon based on file type
                                       let icon = <FaFile />;
                                       if (attachment.name) {
@@ -1015,7 +1400,7 @@ const TicketsPage = () => {
                                       };
                                       
                                       return (
-                                        <div key={attachment.id} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
+                                        <div key={`ms-${attachment.id || i}`} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
                                           <div className="attachment-icon me-2">
                                             {icon}
                                           </div>
@@ -1027,9 +1412,7 @@ const TicketsPage = () => {
                                             <Button 
                                               variant="outline-primary" 
                                               size="sm"
-                                              href={`${apiUrl}/emails/${message.id}/attachments/${attachment.id}?desk_id=${selectedTicket.desk_id}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
+                                              onClick={() => handleS3Download(attachment, message.desk_id)}
                                             >
                                               <FaDownload /> Download
                                             </Button>
@@ -1037,6 +1420,8 @@ const TicketsPage = () => {
                                         </div>
                                       );
                                     })}
+                                    
+
                                   </div>
                                 </div>
                               )}
@@ -1048,23 +1433,11 @@ const TicketsPage = () => {
                                     <div className="mb-1">
                                       <small className="text-muted">
                                         <strong>From: </strong>
-                                        {message.from.emailAddress.name} &lt;{message.from.emailAddress.address}&gt;
-                                      </small>
-                                    </div>
-                                  )}
-                                  
-                                  {message.toRecipients && message.toRecipients.length > 0 && (
-                                    <div className="mb-1">
-                                      <small className="text-muted">
-                                        <strong>To: </strong>
-                                        {message.toRecipients.map((recipient, i) => (
-                                          <span key={i}>
-                                            {recipient.emailAddress.name ? 
-                                              `${recipient.emailAddress.name} <${recipient.emailAddress.address}>` : 
-                                              recipient.emailAddress.address}
-                                            {i < message.toRecipients.length - 1 ? ', ' : ''}
-                                          </span>
-                                        ))}
+                                        {(() => {
+                                          const address = message.from.emailAddress.address || 'no-email';
+                                          const name = message.from.emailAddress.name || '';
+                                          return name ? `${name} <${address}>` : address;
+                                        })()} 
                                       </small>
                                     </div>
                                   )}
@@ -1073,14 +1446,48 @@ const TicketsPage = () => {
                                     <div className="mb-1">
                                       <small className="text-muted">
                                         <strong>CC: </strong>
-                                        {message.ccRecipients.map((recipient, i) => (
-                                          <span key={i}>
-                                            {recipient.emailAddress.name ? 
-                                              `${recipient.emailAddress.name} <${recipient.emailAddress.address}>` : 
-                                              recipient.emailAddress.address}
-                                            {i < message.ccRecipients.length - 1 ? ', ' : ''}
-                                          </span>
-                                        ))}
+                                        {message.ccRecipients.map((recipient, i) => {
+                                          // Case 1: Microsoft Graph API format
+                                          if (recipient && recipient.emailAddress) {
+                                            const address = recipient.emailAddress.address || '';
+                                            const name = recipient.emailAddress.name || '';
+                                            return (
+                                              <span key={i}>
+                                                {name ? `${name} <${address}>` : address}
+                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                              </span>
+                                            );
+                                          }
+                                          
+                                          // Case 2: Simple string format
+                                          else if (typeof recipient === 'string') {
+                                            return (
+                                              <span key={i}>
+                                                {recipient}
+                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                              </span>
+                                            );
+                                          }
+                                          
+                                          // Case 3: Simple object format
+                                          else if (recipient && typeof recipient === 'object') {
+                                            // Try to find address in common property names
+                                            const address = recipient.address || recipient.email || recipient.mail || '';
+                                            const name = recipient.name || recipient.displayName || '';
+                                            
+                                            if (address) {
+                                              return (
+                                                <span key={i}>
+                                                  {name ? `${name} <${address}>` : address}
+                                                  {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                                </span>
+                                              );
+                                            }
+                                          }
+                                          
+                                          // Final fallback
+                                          return <span key={i}>{JSON.stringify(recipient).replace(/[{}"\']/g, '')}{i < message.ccRecipients.length - 1 ? ', ' : ''}</span>;
+                                        })}
                                       </small>
                                     </div>
                                   )}
@@ -1089,7 +1496,13 @@ const TicketsPage = () => {
                                     <div>
                                       <small className="text-muted">
                                         <strong>Received: </strong>
-                                        {new Date(message.receivedDateTime).toLocaleString()}
+                                        {(() => {
+                                          const dateObj = new Date(message.receivedDateTime);
+                                          // Check if hours, minutes, seconds are all zero
+                                          return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
+                                            ? new Date().toLocaleString() 
+                                            : dateObj.toLocaleString();
+                                        })()}
                                       </small>
                                     </div>
                                   )}
@@ -1104,119 +1517,128 @@ const TicketsPage = () => {
                   </div>
                 )}
               </Card.Body>
-              <Card.Footer>
-                <Form>
-                  <Form.Group>
-                    {showCcField && (
-                      <InputGroup className="mb-2">
-                        <InputGroup.Text>CC:</InputGroup.Text>
+              {/* Only show reply section for non-closed tickets/emails */}
+              {(emailStatusFilter !== 'closed' && (selectedTicket.status !== 'closed')) && (
+                <Card.Footer>
+                  <Form>
+                    <Form.Group>
+                      {showCcField && (
+                        <InputGroup className="mb-2">
+                          <InputGroup.Text>CC:</InputGroup.Text>
+                          <Form.Control 
+                            type="text" 
+                            placeholder="recipient1@example.com, recipient2@example.com"
+                            value={ccRecipients}
+                            onChange={(e) => setCcRecipients(e.target.value)}
+                            disabled={sending}
+                          />
+                        </InputGroup>
+                      )}
+                      <InputGroup>
                         <Form.Control 
-                          type="text" 
-                          placeholder="recipient1@example.com, recipient2@example.com"
-                          value={ccRecipients}
-                          onChange={(e) => setCcRecipients(e.target.value)}
+                          as="textarea" 
+                          rows={3} 
+                          placeholder="Type your reply here..."
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
                           disabled={sending}
                         />
                       </InputGroup>
-                    )}
-                    <InputGroup>
-                      <Form.Control 
-                        as="textarea" 
-                        rows={3} 
-                        placeholder="Type your reply here..."
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        disabled={sending}
-                      />
-                    </InputGroup>
-                    {attachments.length > 0 && (
-                      <div className="mt-2 mb-2">
-                        <small className="text-muted d-block mb-1">Attachments:</small>
-                        <ListGroup variant="flush" className="attachment-list">
-                          {attachments.map((file, index) => (
-                            <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
-                              <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
-                                <FaPaperclip size={12} className="me-1 flex-shrink-0" />
-                                {file.name} ({ (file.size / 1024).toFixed(1) } KB)
-                              </small>
-                              <Button 
-                                variant="link" 
-                                size="sm" 
-                                className="p-0 text-danger ms-2 flex-shrink-0" 
-                                onClick={() => handleRemoveAttachment(file.name)} 
-                                aria-label={`Remove ${file.name}`}
-                              >
-                                &times;
-                              </Button>
-                            </ListGroup.Item>
-                          ))}
-                        </ListGroup>
-                      </div>
-                    )}
-                    <div className="d-flex justify-content-between align-items-center mt-2">
-                      <div>
-                        <OverlayTrigger
-                          placement="top"
-                          overlay={<Tooltip>Attach files</Tooltip>}
-                        >
-                          <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
-                            <FaPaperclip />
-                          </Button>
-                        </OverlayTrigger>
-                        <input 
-                          type="file" 
-                          multiple 
-                          ref={fileInputRef} 
-                          onChange={handleFileChange} 
-                          style={{ display: 'none' }} 
-                        />
-                        <Button
-                          variant="link"
-                          className="text-muted p-0"
-                          onClick={() => setShowCcField(!showCcField)}
-                        >
-                          CC{showCcField ? ' ▲' : ' ▼'}
-                        </Button>
-                      </div>
-                      <div>
-                        {selectedTicket.isEmail ? (
-                          <Button 
-                            variant="info"
-                            className="me-2"
-                            onClick={() => resolveEmail(selectedTicket.emailId)}
-                            disabled={sending}
+                      {attachments.length > 0 && (
+                        <div className="mt-2 mb-2">
+                          <small className="text-muted d-block mb-1">Attachments:</small>
+                          <ListGroup variant="flush" className="attachment-list">
+                            {attachments.map((file, index) => (
+                              <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
+                                <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
+                                  <FaPaperclip size={12} className="me-1 flex-shrink-0" />
+                                  {file.name} ({ (file.size / 1024).toFixed(1) } KB)
+                                </small>
+                                <Button 
+                                  variant="link" 
+                                  size="sm" 
+                                  className="p-0 text-danger ms-2 flex-shrink-0" 
+                                  onClick={() => handleRemoveAttachment(file.name)} 
+                                  aria-label={`Remove ${file.name}`}
+                                >
+                                  &times;
+                                </Button>
+                              </ListGroup.Item>
+                            ))}
+                          </ListGroup>
+                        </div>
+                      )}
+                      <div className="d-flex justify-content-between align-items-center mt-2">
+                        <div>
+                          <OverlayTrigger
+                            placement="top"
+                            overlay={<Tooltip>Attach files</Tooltip>}
                           >
-                            <FaCheckCircle className="me-1" /> Resolve Email
-                          </Button>
-                        ) : (
-                          <Button 
-                            variant="outline-secondary" 
-                            className="me-2"
-                            onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}
+                            <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+                              <FaPaperclip />
+                            </Button>
+                          </OverlayTrigger>
+                          <input 
+                            type="file" 
+                            multiple 
+                            ref={fileInputRef} 
+                            onChange={handleFileChange} 
+                            style={{ display: 'none' }} 
+                          />
+                          <Button
+                            variant="link"
+                            className="text-muted p-0"
+                            onClick={() => setShowCcField(!showCcField)}
                           >
-                            <FaCheck className="me-1" /> Close
+                            CC{showCcField ? ' ▲' : ' ▼'}
                           </Button>
-                        )}
-                        <Button 
-                          variant="primary"
-                          onClick={handleSendReply}
-                          disabled={!replyText.trim() || sending}
-                        >
-                          {sending ? (
-                            <>
-                              <Spinner animation="border" size="sm" className="me-1" /> Sending...
-                            </>
+                        </div>
+                        <div>
+                          {selectedTicket.isEmail ? (
+                            <Button 
+                              variant="info"
+                              className="me-2"
+                              onClick={() => resolveEmail(selectedTicket.emailId)}
+                              disabled={sending}
+                            >
+                              <FaCheckCircle className="me-1" /> Resolve Email
+                            </Button>
                           ) : (
-                            <>
-                              <FaPaperPlane className="me-1" /> {selectedTicket.isEmail ? "Reply" : "Send"}
-                            </>
+                            <Button 
+                              variant="outline-secondary" 
+                              className="me-2"
+                              onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}
+                            >
+                              <FaCheck className="me-1" /> Close
+                            </Button>
                           )}
-                        </Button>
+                          <Button 
+                            variant="primary"
+                            onClick={handleSendReply}
+                            disabled={!replyText.trim() || sending}
+                          >
+                            {sending ? (
+                              <>
+                                <Spinner animation="border" size="sm" className="me-1" /> Sending...
+                              </>
+                            ) : (
+                              <>
+                                <FaPaperPlane className="me-1" /> {selectedTicket.isEmail ? "Reply" : "Send"}
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  </Form.Group>
-                </Form>
-              </Card.Footer>
+                    </Form.Group>
+                  </Form>
+                </Card.Footer>
+              )}
+              {/* Show a notice for closed tickets */}
+              {(emailStatusFilter === 'closed' || selectedTicket.status === 'closed') && (
+                <Card.Footer className="text-center text-muted py-3">
+                  <FaInfoCircle className="me-2" /> This conversation is closed. Replying is not available.
+                </Card.Footer>
+              )}
             </Card>
           ) : (
             <div className="text-center py-5">
