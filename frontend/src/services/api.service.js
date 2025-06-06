@@ -1,22 +1,24 @@
 import axios from 'axios';
 
 // Create an axios instance with default config
-// Determine environment
+// Determine environment based on hostname
 const isProd = window.location.hostname !== 'localhost';
+
+// Set API URL based on environment
+const apiUrl = isProd ? 'https://api.channelplay.in/api' : 'http://localhost:3001/api';
 
 // Create API instance with appropriate base URL
 const API = axios.create({
-  baseURL: isProd
-    ? 'https://api.channelplay.in/api' // Production - hardcoded for reliability
-    : 'http://localhost:3001/api',    // Development
+  baseURL: apiUrl,
   headers: {
     'Content-Type': 'application/json'
   }
 });
 
 // Log API URL for debugging
-console.log('API base URL:', isProd ? 'https://api.channelplay.in/api' : 'http://localhost:3001/api');
+console.log('API base URL:', apiUrl);
 console.log('Current hostname:', window.location.hostname);
+console.log('Environment:', isProd ? 'Production' : 'Development');
 
 // Add request interceptor to include auth token
 API.interceptors.request.use(

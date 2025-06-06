@@ -1,14 +1,11 @@
-import axios from 'axios';
-import AuthService from './auth.service';
-import { API_URL } from '../constants';
+import API from './api.service';
 
 const EmailService = {
   // Get Microsoft OAuth URL
   getMicrosoftAuthUrl: async (deskId) => {
     try {
-      const response = await axios.get(`${API_URL}/email-auth/microsoft/auth-url`, {
-        params: { desk_id: deskId },
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/email-auth/microsoft/auth-url', {
+        params: { desk_id: deskId }
       });
       
       return response.data;
@@ -20,9 +17,8 @@ const EmailService = {
   // Get Gmail OAuth URL
   getGmailAuthUrl: async (deskId) => {
     try {
-      const response = await axios.get(`${API_URL}/email-auth/gmail/auth-url`, {
-        params: { desk_id: deskId },
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/email-auth/gmail/auth-url', {
+        params: { desk_id: deskId }
       });
       
       return response.data;
@@ -48,10 +44,9 @@ const EmailService = {
         formData.delete('desk_id');
       }
       
-      const response = await axios.post(
-        `${API_URL}/emails/send/${ticketId}${deskId ? `?desk_id=${encodeURIComponent(deskId)}` : ''}`, 
-        formData, 
-        { headers: AuthService.getAuthHeader() }
+      const response = await API.post(
+        `/emails/send/${ticketId}${deskId ? `?desk_id=${encodeURIComponent(deskId)}` : ''}`, 
+        formData
       );
       
       return response.data;
@@ -83,10 +78,9 @@ const EmailService = {
       };
       
       // Pass desk_id as a query parameter instead of in the form data
-      const response = await axios.post(
-        `${API_URL}/emails/${emailId}/reply?desk_id=${encodeURIComponent(deskId)}`, 
-        formData, 
-        { headers: headers }
+      const response = await API.post(
+        `/emails/${emailId}/reply?desk_id=${encodeURIComponent(deskId)}`, 
+        formData
       );
       
       return response.data;
@@ -99,9 +93,8 @@ const EmailService = {
   // Fetch unread emails for a desk
   fetchUnreadEmails: async (deskId) => {
     try {
-      const response = await axios.get(`${API_URL}/emails/unread`, {
-        params: { desk_id: deskId },
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/emails/unread', {
+        params: { desk_id: deskId }
       });
       
       return response.data;
@@ -113,9 +106,8 @@ const EmailService = {
   // Fetch all emails (both read and unread) for a desk with conversation history
   fetchAllEmails: async (deskId) => {
     try {
-      const response = await axios.get(`${API_URL}/emails`, {
-        params: { desk_id: deskId },
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/emails', {
+        params: { desk_id: deskId }
       });
       
       return response.data;
@@ -128,9 +120,7 @@ const EmailService = {
   fetchConversation: async (ticketId) => {
     try {
       console.log('Fetching conversation for ticket:', ticketId);
-      const response = await axios.get(`${API_URL}/emails/conversation/${ticketId}`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get(`/emails/conversation/${ticketId}`);
       
       console.log('Conversation response:', response.data);
       // Handle both response formats (array or {data: array})
@@ -147,9 +137,8 @@ const EmailService = {
   // Mark email as read
   markAsRead: async (emailId, deskId) => {
     try {
-      const response = await axios.post(`${API_URL}/emails/mark-read/${emailId}`, {}, {
-        params: { deskId },
-        headers: AuthService.getAuthHeader()
+      const response = await API.post(`/emails/mark-read/${emailId}`, {}, {
+        params: { deskId }
       });
       
       return response.data;
@@ -183,12 +172,10 @@ const EmailService = {
         content += `<p>You selected: ${feedbackType}</p>`;
       }
       
-      const response = await axios.post(`${API_URL}/emails/${emailId}/resolve`, {
+      const response = await API.post(`/emails/${emailId}/resolve`, {
         content,
         deskId,
         subject: 'Ticket Resolved - Feedback Request'
-      }, {
-        headers: AuthService.getAuthHeader()
       });
       
       return response.data;
@@ -198,15 +185,31 @@ const EmailService = {
     }
   },
   
-  // Fetch emails by status (e.g., 'open', 'closed')
-  fetchEmails: async (deskId, status = 'open') => { // Added status parameter, defaults to 'open'
+  // Download S3 attachment
+  downloadS3Attachment: async (s3Key, deskId) => {
     try {
-      const response = await axios.get(`${API_URL}/emails`, { // Corrected endpoint path
-        params: { // Pass desk_id and status as query parameters
-          desk_id: deskId, 
-          status: status
+      const response = await API.get('/emails/s3-download', {
+        params: { 
+          s3Key: s3Key, // Axios will URL-encode this
+          desk_id: deskId 
         },
-        headers: AuthService.getAuthHeader()
+        responseType: 'blob' // Important for file downloads
+      });
+      return response.data; // This will be the blob
+    } catch (error) {
+      console.error('Error downloading S3 attachment in EmailService:', error);
+      throw error.response ? error.response.data : error.message;
+    }
+  },
+
+  // Fetch emails by status (e.g., 'open', 'closed')
+  fetchEmails: async (deskId, status = 'open') => { 
+    try {
+      const response = await API.get('/emails', {
+        params: { 
+          desk_id: deskId,
+          status: status  
+        }
       });
       
       return response.data;

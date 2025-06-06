@@ -102,6 +102,45 @@ const TicketsPage = () => {
     }).filter(Boolean); // Remove any null entries
   }, []);
 
+  const handleS3Download = async (attachment, messageDeskId) => {
+    if (!attachment || !attachment.s3Key) {
+      console.error('Invalid attachment object for S3 download:', attachment);
+      setError('Cannot download: Invalid attachment data.'); // Assuming setError is a state setter
+      return;
+    }
+    // Use message.desk_id if available, otherwise fallback to selectedDeskId from component state
+    const deskIdToUse = messageDeskId || selectedDeskId; 
+
+    if (!deskIdToUse) {
+      console.error('Missing desk_id for S3 download. messageDeskId:', messageDeskId, 'selectedDeskId:', selectedDeskId);
+      setError('Cannot download: Desk ID is missing.'); // Assuming setError is a state setter
+      return;
+    }
+
+    console.log(`Attempting to download S3 attachment: ${attachment.name} (Key: ${attachment.s3Key}) for desk: ${deskIdToUse}`);
+    setSending(true); // Assuming setSending is a state setter
+    setError(null);
+    try {
+      // This EmailService.downloadS3Attachment method will need to be created
+      const blob = await EmailService.downloadS3Attachment(attachment.s3Key, deskIdToUse);
+      
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', attachment.name || 'downloaded_file'); 
+      document.body.appendChild(link);
+      link.click();
+      
+      URL.revokeObjectURL(link.href);
+      document.body.removeChild(link);
+      setSending(false);
+    } catch (err) {
+      console.error('Error downloading S3 attachment:', err);
+      const errorMessage = err.response?.data?.message || err.message || 'Server error during download.';
+      setError(`Download failed: ${errorMessage}`);
+      setSending(false);
+    }
+  };
+
   // Effect to handle desk fetching - runs only when userInfo changes
   useEffect(() => {
     if (!userInfo) return;
@@ -1373,9 +1412,7 @@ const TicketsPage = () => {
                                             <Button 
                                               variant="outline-primary" 
                                               size="sm"
-                                              href={`${apiUrl}/emails/${message.id}/attachments/${attachment.id}?desk_id=${selectedTicket.desk_id}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
+                                              onClick={() => handleS3Download(attachment, message.desk_id)}
                                             >
                                               <FaDownload /> Download
                                             </Button>
@@ -1384,64 +1421,7 @@ const TicketsPage = () => {
                                       );
                                     })}
                                     
-                                    {/* Handle S3 attachments */}
-                                    {message.attachments_urls && message.attachments_urls.length > 0 && message.attachments_urls.map((attachment, i) => {
-                                      // Determine icon based on file type
-                                      let icon = <FaFile />;
-                                      if (attachment.name) {
-                                        const extension = attachment.name.split('.').pop().toLowerCase();
-                                        if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'].includes(extension)) {
-                                          icon = <FaFileImage />;
-                                        } else if (['pdf'].includes(extension)) {
-                                          icon = <FaFilePdf />;
-                                        } else if (['doc', 'docx'].includes(extension)) {
-                                          icon = <FaFileWord />;
-                                        } else if (['xls', 'xlsx'].includes(extension)) {
-                                          icon = <FaFileExcel />;
-                                        } else if (['ppt', 'pptx'].includes(extension)) {
-                                          icon = <FaFilePowerpoint />;
-                                        } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extension)) {
-                                          icon = <FaFileArchive />;
-                                        } else if (['txt', 'text'].includes(extension)) {
-                                          icon = <FaFileAlt />;
-                                        }
-                                      }
-                                      
-                                      // For S3 attachments, we can display image previews for image files
-                                      const isImage = attachment.contentType && attachment.contentType.startsWith('image/');
-                                      
-                                      return (
-                                        <div key={`s3-${i}`} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
-                                          <div className="attachment-icon me-2">
-                                            {icon}
-                                          </div>
-                                          <div className="attachment-details flex-grow-1">
-                                            <div className="attachment-name">{attachment.name}</div>
-                                            <small className="text-muted">{formatFileSize(attachment.size)}</small>
-                                            {isImage && attachment.url && (
-                                              <div className="attachment-preview mt-2">
-                                                <img 
-                                                  src={attachment.url} 
-                                                  alt={attachment.name} 
-                                                  style={{ maxWidth: '100%', maxHeight: '150px', objectFit: 'contain' }} 
-                                                />
-                                              </div>
-                                            )}
-                                          </div>
-                                          <div className="attachment-actions">
-                                            <Button 
-                                              variant="outline-primary" 
-                                              size="sm"
-                                              href={attachment.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                            >
-                                              <FaDownload /> Download
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
+
                                   </div>
                                 </div>
                               )}

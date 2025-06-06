@@ -1,15 +1,11 @@
-import axios from 'axios';
-import AuthService from './auth.service';
-
-const API_URL = 'http://localhost:3001/api';
+import API from './api.service';
 
 const TicketService = {
   // Get all tickets
   getAllTickets: async (filters = {}) => {
     try {
-      const response = await axios.get(`${API_URL}/tickets`, {
-        params: filters,
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/tickets', {
+        params: filters
       });
       
       return response.data;
@@ -21,9 +17,7 @@ const TicketService = {
   // Get ticket by id
   getTicketById: async (id) => {
     try {
-      const response = await axios.get(`${API_URL}/tickets/${id}`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get(`/tickets/${id}`);
       
       return response.data;
     } catch (error) {
@@ -34,9 +28,7 @@ const TicketService = {
   // Create new ticket
   createTicket: async (ticketData) => {
     try {
-      const response = await axios.post(`${API_URL}/tickets`, ticketData, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.post('/tickets', ticketData);
       
       return response.data;
     } catch (error) {
@@ -47,9 +39,7 @@ const TicketService = {
   // Update ticket
   updateTicket: async (id, ticketData) => {
     try {
-      const response = await axios.put(`${API_URL}/tickets/${id}`, ticketData, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.put(`/tickets/${id}`, ticketData);
       
       return response.data;
     } catch (error) {
@@ -60,9 +50,7 @@ const TicketService = {
   // Reply to ticket
   replyToTicket: async (id, replyData) => {
     try {
-      const response = await axios.post(`${API_URL}/tickets/${id}/reply`, replyData, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.post(`/tickets/${id}/reply`, replyData);
       
       return response.data;
     } catch (error) {
@@ -73,9 +61,7 @@ const TicketService = {
   // Delete ticket
   deleteTicket: async (id) => {
     try {
-      const response = await axios.delete(`${API_URL}/tickets/${id}`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.delete(`/tickets/${id}`);
       
       return response.data;
     } catch (error) {
@@ -86,9 +72,7 @@ const TicketService = {
   // Get ticket metrics
   getTicketMetrics: async () => {
     try {
-      const response = await axios.get(`${API_URL}/tickets/metrics`, {
-        headers: AuthService.getAuthHeader()
-      });
+      const response = await API.get('/tickets/metrics');
       
       return response.data;
     } catch (error) {
@@ -99,13 +83,10 @@ const TicketService = {
   // Create a ticket from an email
   createTicketFromEmail: async (emailId, deskId) => {
     try {
-      const response = await axios.post(`${API_URL}/tickets/from-email`, 
-        { 
-          email_id: emailId,
-          desk_id: deskId 
-        },
-        { headers: AuthService.getAuthHeader() }
-      );
+      const response = await API.post('/tickets/from-email', { 
+        email_id: emailId,
+        desk_id: deskId 
+      });
       
       return response;
     } catch (error) {
@@ -116,9 +97,8 @@ const TicketService = {
   // Get tickets by desk ID
   getTickets: async (filters) => {
     try {
-      const response = await axios.get(`${API_URL}/tickets`, {
-        params: filters,
-        headers: AuthService.getAuthHeader()
+      const response = await API.get('/tickets', {
+        params: filters
       });
       
       return response;

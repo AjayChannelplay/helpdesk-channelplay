@@ -38,4 +38,7 @@ router.post('/:emailId/resolve', emailController.resolveTicket);
 // Get attachment for an email
 router.get('/:emailId/attachments/:attachmentId', emailController.getAttachment);
 
+// Download attachment from S3
+router.get('/s3-download', emailController.downloadS3Attachment);
+
 module.exports = router;

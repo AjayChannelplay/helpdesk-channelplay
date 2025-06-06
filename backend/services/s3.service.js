@@ -11,18 +11,24 @@ requiredEnvVars.forEach(varName => {
   }
 });
 
-// Configure AWS SDK
-const awsConfig = {
+// Determine region and log it
+const configuredRegion = process.env.AWS_REGION;
+console.log(`----------------->[s3.service] Value of process.env.AWS_REGION at module load: ${configuredRegion}`);
+
+const regionToUse = configuredRegion || 'us-east-1'; // Default to us-east-1 if not set
+console.log(`---------------->[s3.service] Region being used for S3 client: ${regionToUse}`);
+
+// Instantiate S3 client with explicit configuration
+const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION || 'us-east-1'
-};
+  region: regionToUse,
+  signatureVersion: 'v4', // Important for many regions, ensures V4 signatures
+  endpoint: `https://s3.${regionToUse}.amazonaws.com` // Explicitly set the endpoint URL
+});
 
-AWS.config.update(awsConfig);
-console.log(`AWS SDK configured for region: ${awsConfig.region}`);
-
-const s3 = new AWS.S3();
 const bucketName = process.env.S3_BUCKET_NAME;
+console.log(`[s3.service] S3 client initialized. Target bucket: ${bucketName}, Region: ${regionToUse}`);
 
 console.log(`S3 service initialized. Target bucket: ${bucketName}`);
 
@@ -81,9 +87,9 @@ const uploadFileToS3 = async (file, folder = 'attachments') => {
       ContentDisposition: `inline; filename="${file.originalname}"` // Original name when downloaded
     };
     
-    console.log('S3 upload params:', { ...params, Body: '(buffer content omitted)' });
-    
-    console.log(`⬆️ Uploading file to S3...`);
+    console.log('S3 Upload Params:', JSON.stringify(params, (key, value) => (key === 'Body' ? '(buffer content omitted)' : value), 2));
+    console.log(`*****************[s3.service] PRE-UPLOAD CHECK - s3.config.region: ${s3.config.region}, s3.config.signatureVersion: ${s3.config.signatureVersion}`);
+    console.log('Uploading file to S3...');
     const uploadResult = await s3.upload(params).promise();
     
     console.log(`✅ Upload successful! File URL: ${uploadResult.Location}`);
@@ -115,9 +121,29 @@ const upload = multer({
   }
 });
 
+// Function to get a readable stream for an S3 object
+const getS3ObjectStream = (s3Key) => {
+  if (!s3Key) {
+    console.error('[s3.service] s3Key is required for getS3ObjectStream');
+    throw new Error('S3 key is required to get object stream.');
+  }
+  console.log(`[s3.service] Creating read stream for S3 key: ${s3Key}`);
+  const params = {
+    Bucket: bucketName,
+    Key: s3Key,
+  };
+  try {
+    return s3.getObject(params).createReadStream();
+  } catch (error) {
+    console.error(`[s3.service] Error creating S3 object stream for key ${s3Key}:`, error);
+    throw error; // Re-throw to be caught by the caller
+  }
+};
+
 module.exports = {
   upload,
   uploadFileToS3,
   s3,
-  bucketName
+  bucketName,
+  getS3ObjectStream
 };

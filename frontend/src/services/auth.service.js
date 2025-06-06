@@ -1,6 +1,4 @@
-import axios from 'axios';
-
-const API_URL = 'http://localhost:3001/api';
+import API from './api.service';
 
 const AuthService = {
   // Login user
@@ -30,7 +28,7 @@ const AuthService = {
       // }
       
       // If not using demo credentials, proceed with actual API call
-      const response = await axios.post(`${API_URL}/auth/login`, { email, password });
+      const response = await API.post('/auth/login', { email, password });
       
       // If response.data.token exists, store the user data in localStorage
       if (response.data.token) {

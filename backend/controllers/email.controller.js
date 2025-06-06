@@ -2,7 +2,8 @@ const EmailService = require('../utils/email.service');
 const Ticket = require('../models/ticket.model');
 const Desk = require('../models/desk.model');
 const Message = require('../models/message.model');
-const { uploadFileToS3 } = require('../services/s3.service');
+const { uploadFileToS3, getS3ObjectStream } = require('../services/s3.service');
+const path = require('path');
 const { supabase } = require('../config/db.config');
 const axios = require('axios');
 const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
@@ -1474,7 +1475,7 @@ exports.fetchEmails = async (req, res) => {
             direction: m.direction,
             hasAttachments: m.has_attachments,
             importance: m.importance,
-            // attachments: m.attachments_metadata, // If we store attachment metadata separately
+            attachments: m.attachments_urls || [] // Include attachments_urls field from the message table
           })),
           latestMessageId: latestMessage.microsoft_message_id || latestMessage.id,
           firstMessageId: firstMessage.microsoft_message_id || firstMessage.id,
@@ -1635,6 +1636,95 @@ exports.fetchConversation = async (req, res) => {
     return res.status(500).json({ message: error.message || 'Error fetching conversation' });
   }
 };
+// Download S3 attachment
+exports.downloadS3Attachment = async (req, res) => {
+  try {
+    const { s3Key } = req.query;
+    // const desk_id = extractDeskId(req); // Available if needed for logging or validation
+
+    if (!s3Key) {
+      console.warn('[email.controller] downloadS3Attachment: s3Key parameter is missing.');
+      return res.status(400).json({ message: 'S3 key is required.' });
+    }
+
+    console.log(`[email.controller] Attempting to download S3 attachment with key: ${s3Key}`);
+
+    // Query for messages where attachments_urls contains an object with the given s3Key.
+    // The '??' operator checks if a JSONB string (s3Key) exists as a key in any of the objects within the attachments_urls array.
+    // This is a more robust way to query than trying to match the whole object.
+    // Supabase/Postgres: SELECT * FROM messages WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(attachments_urls) AS elem WHERE elem->>'s3Key' = 'your_key');
+    // We'll use a simpler Supabase filter first, and if it's not efficient enough, consider an RPC.
+    const { data: messages, error: dbError } = await supabase
+      .from('messages')
+      .select('attachments_urls, desk_id') // desk_id for potential validation
+      .filter('attachments_urls', 'cs', `[{"s3Key":"${s3Key}"}]`); // 'cs' checks if JSONB contains the specified JSONB
+      // A more precise query might be needed if this is too broad or inefficient.
+      // For instance, using a function or ensuring the s3Key is unique across all attachments.
+
+    if (dbError) {
+      console.error('[email.controller] Error fetching message for S3 attachment:', dbError);
+      return res.status(500).json({ message: 'Error fetching attachment details.' });
+    }
+
+    if (!messages || messages.length === 0) {
+      console.warn(`[email.controller] No message found potentially containing S3 key: ${s3Key} using .filter 'cs'`);
+      // Attempt a broader search if the first one fails, then filter in JS (less efficient but a fallback)
+      // This part is more complex and depends on how s3Keys are structured and if they can appear in multiple messages.
+      // For now, we assume the above query is sufficient or we find the first match.
+      return res.status(404).json({ message: 'Attachment metadata not found (no matching message).' });
+    }
+
+    let attachmentMeta = null;
+    let messageDeskId = null;
+
+    for (const message of messages) {
+      if (message.attachments_urls && Array.isArray(message.attachments_urls)) {
+        const foundAtt = message.attachments_urls.find(att => att.s3Key === s3Key);
+        if (foundAtt) {
+          attachmentMeta = foundAtt;
+          messageDeskId = message.desk_id; // Store desk_id of the message for context
+          break;
+        }
+      }
+    }
+
+    if (!attachmentMeta) {
+      console.warn(`[email.controller] S3 key ${s3Key} not found in attachments_urls of any queried message.`);
+      return res.status(404).json({ message: 'Attachment metadata not found in message details.' });
+    }
+    
+    // Optional: Validate if the attachment's message desk_id matches user's current desk_id if necessary for security
+    // const requestingDeskId = extractDeskId(req);
+    // if (requestingDeskId && messageDeskId && String(messageDeskId) !== String(requestingDeskId)) {
+    //   console.warn(`[email.controller] Security: Attempt to access attachment ${s3Key} from desk ${messageDeskId} by user from desk ${requestingDeskId}`);
+    //   return res.status(403).json({ message: 'Access to this attachment is forbidden.' });
+    // }
+
+    const s3ObjectStream = getS3ObjectStream(s3Key);
+
+    res.setHeader('Content-Type', attachmentMeta.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${attachmentMeta.name || path.basename(s3Key)}"`);
+    if (attachmentMeta.size) {
+      res.setHeader('Content-Length', attachmentMeta.size.toString());
+    }
+
+    s3ObjectStream.on('error', (s3Error) => {
+      console.error(`[email.controller] Error streaming S3 object ${s3Key}:`, s3Error);
+      if (!res.headersSent) {
+        res.status(500).json({ message: 'Error streaming file from S3.' });
+      }
+    });
+
+    s3ObjectStream.pipe(res);
+
+  } catch (error) {
+    console.error('[email.controller] Unexpected error in downloadS3Attachment:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Failed to download attachment due to an unexpected error.' });
+    }
+  }
+};
+
 // Mark an email as read
 exports.markAsRead = async (req, res) => {
   try {
