@@ -71,11 +71,9 @@ const EmailService = {
       // This avoids issues with how FormData is processed by multer and body-parser
       formData.delete('desk_id');
       
-      // When sending FormData, we should NOT set the Content-Type header
-      // axios will automatically set it with the correct boundary parameter
-      const headers = {
-        ...AuthService.getAuthHeader()
-      };
+      // When sending FormData, we don't need to set headers manually
+      // The API service already handles auth headers via interceptors
+      // And axios will automatically set the correct Content-Type with boundary parameter
       
       // Pass desk_id as a query parameter instead of in the form data
       const response = await API.post(
