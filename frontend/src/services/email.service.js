@@ -75,10 +75,19 @@ const EmailService = {
       // The API service already handles auth headers via interceptors
       // And axios will automatically set the correct Content-Type with boundary parameter
       
+      // When sending FormData with files, we need to ensure the content type is not set manually
+      // so that axios can set the correct multipart/form-data with boundary parameter
+      const config = {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      };
+      
       // Pass desk_id as a query parameter instead of in the form data
       const response = await API.post(
         `/emails/${emailId}/reply?desk_id=${encodeURIComponent(deskId)}`, 
-        formData
+        formData,
+        config
       );
       
       return response.data;

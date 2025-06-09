@@ -113,9 +113,13 @@ const Message = {
 
       if (error) {
         console.error('Supabase insert error in logMessage:', error);
-        throw new Error(`Error logging message: ${error.message}`);
+        throw new Error(`Error saving message: ${error.message}`);
       }
 
+      // Log success information
+      console.log(`[MessageModel] Message inserted successfully. ID: ${data?.[0]?.id}, Has Attachments: ${data?.[0]?.has_attachments}`);
+      console.log(`[MessageModel] Attachments URLs saved: ${JSON.stringify((data?.[0]?.attachments_urls || []))}`); 
+      
       // If this is a new assignment and the message was successfully inserted
       if (data && data[0] && data[0].assigned_to_user_id && direction === 'incoming') {
         console.log(`[MessageModel] Message ${data[0].id} inserted with assigned_to_user_id: ${data[0].assigned_to_user_id}. Updating desk ${desk_id}.`);
@@ -124,7 +128,7 @@ const Message = {
           .from('desks')
           .update({ last_assigned_user_id: data[0].assigned_to_user_id })
           .eq('id', desk_id);
-          
+        
         if (updateError) {
           console.error(`[MessageModel] Failed to update desk ${desk_id} with last_assigned_user_id ${data[0].assigned_to_user_id}:`, updateError);
         } else {
