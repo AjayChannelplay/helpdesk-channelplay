@@ -88,17 +88,17 @@ const Header = ({ user, onLogout }) => {
             aria-expanded={dropdownOpen}
             aria-haspopup="true"
           >
-            <div className="avatar">{userData?.username?.charAt(0) || user?.username?.charAt(0) || 'A'}</div>
-            <span className="profile-name">{userData?.username || user?.username || 'Admin'}</span>
+            <div className="avatar">{userData?.display_name?.charAt(0) || userData?.name?.charAt(0) || user?.display_name?.charAt(0) || user?.name?.charAt(0) || 'A'}</div>
+            <span className="profile-name">{userData?.display_name || userData?.name || user?.display_name || user?.name || 'User'}</span>
             <FaChevronDown className={`chevron ${dropdownOpen ? 'up' : ''}`} />
           </button>
           
           {dropdownOpen && (
             <div className="profile-dropdown">
               <div className="dropdown-header">
-                <div className="avatar-large">{userData?.username?.charAt(0) || user?.username?.charAt(0) || 'A'}</div>
+                <div className="avatar-large">{userData?.display_name?.charAt(0) || userData?.name?.charAt(0) || user?.display_name?.charAt(0) || user?.name?.charAt(0) || 'A'}</div>
                 <div>
-                  <div className="name">{userData?.username || user?.username || 'Admin'}</div>
+                  <div className="name">{userData?.display_name || userData?.name || user?.display_name || user?.name || 'User'}</div>
                   <div className="role">{userData?.role || user?.role || ''}</div>
                 </div>
               </div>

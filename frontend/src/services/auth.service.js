@@ -184,9 +184,51 @@ const AuthService = {
     const user = AuthService.getCurrentUser();
     
     if (user && user.token) {
-      return { Authorization: `Bearer ${user.token}` };
+      return { Authorization: 'Bearer ' + user.token };
     } else {
       return {};
+    }
+  },
+  
+  // Process encrypted email SSO access request
+  processAccessRequest: async (encryptedEmail) => {
+    try {
+      console.log('[auth.service] Processing SSO access request with encrypted email');
+      const response = await API.get(`/access?email=${encodeURIComponent(encryptedEmail)}`);
+      
+      // If response.data.token exists, store the user data in localStorage
+      if (response.data.token) {
+        console.log('[auth.service] SSO access successful, storing user data');
+        
+        // Clone the response data to avoid modifying the original
+        const userData = { ...response.data };
+        
+        // Make sure the user object is properly structured
+        if (!userData.user && userData.id) {
+          // If the user data is flat (not nested under 'user'), restructure it
+          userData.user = {
+            id: userData.id,
+            email: userData.email,
+            name: userData.name,
+            role: userData.role
+          };
+        }
+        
+        // Make sure the user has assignedDesks property
+        if (userData.user && !userData.user.assignedDesks && userData.assignedDesks) {
+          userData.user.assignedDesks = userData.assignedDesks;
+          console.log('[auth.service] Added assignedDesks to user object:', userData.user.assignedDesks);
+        }
+        
+        console.log('[auth.service] Final userData structure being saved to localStorage:', userData);
+        // Store the full response in localStorage
+        localStorage.setItem('user', JSON.stringify(userData));
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('[auth.service] SSO access request failed:', error);
+      throw error;
     }
   }
 };

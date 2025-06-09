@@ -11,6 +11,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Import controllers
+const accessController = require('./controllers/access.controller');
+
 // Middleware
 // Configure CORS with explicit settings
 app.use(cors({
@@ -71,6 +74,13 @@ app.get('/api/auth/microsoft/callback', (req, res) => {
   // Forward this request to our email-auth controller
   require('./controllers/email-auth.controller').handleMicrosoftCallback(req, res);
 });
+
+// SSO access route for encrypted email authentication
+app.get('/api/access', (req, res) => {
+  console.log('[server.js] Received SSO access request with encrypted email');
+  accessController.processAccess(req, res);
+});
+
 app.use('/health', healthRoutes);
 
 // Default route
