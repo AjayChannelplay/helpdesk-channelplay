@@ -1,4 +1,5 @@
 const { supabase } = require('../config/db.config');
+const { assignUserRoundRobin } = require('../utils/direct_assignment.utils');
 
 const Message = {
   /**
@@ -63,7 +64,48 @@ const Message = {
       // Ensure created_at and updated_at are handled by Supabase defaults or triggers
     };
 
+    console.log(`[MessageModel] Preparing to log message. Direction: ${direction}, Desk ID: ${desk_id}, Conversation ID: ${microsoft_conversation_id}`);
     try {
+      // Implement round-robin assignment for incoming messages
+      if (direction === 'incoming' && desk_id) {
+        console.log(`[MessageModel] Incoming message for desk ${desk_id}. Proceeding with assignment logic.`);
+        // Only for new conversations or first messages in a thread
+        try {
+          // First check if this is part of an existing conversation
+          if (microsoft_conversation_id) {
+            // Check if any messages in this conversation already have an assignment
+            const { data: existingThread } = await supabase
+              .from('messages')
+              .select('assigned_to_user_id')
+              .eq('microsoft_conversation_id', microsoft_conversation_id)
+              .not('assigned_to_user_id', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            
+            // If this conversation already has an assigned user, use that
+            if (existingThread && existingThread.length > 0 && existingThread[0].assigned_to_user_id) {
+              console.log(`[MessageModel] Reusing existing assignment ${existingThread[0].assigned_to_user_id} for conversation ${microsoft_conversation_id}`);
+              messageToInsert.assigned_to_user_id = existingThread[0].assigned_to_user_id;
+            } else {
+              console.log(`[MessageModel] No existing assignment for conversation ${microsoft_conversation_id}. Attempting new round-robin assignment.`);
+              // New conversation, assign using round-robin
+              const assignedUserId = await assignUserRoundRobin(desk_id, microsoft_conversation_id);
+              if (assignedUserId) {
+                console.log(`[MessageModel] Round-robin assigned user ${assignedUserId} for new conversation ${microsoft_conversation_id} on desk ${desk_id}.`);
+                messageToInsert.assigned_to_user_id = assignedUserId;
+              } else {
+                console.warn(`[MessageModel] assignUserRoundRobin returned null for desk ${desk_id}. No user assigned.`);
+              }
+            }
+          }
+        } catch (assignError) {
+          console.error('[MessageModel] Error during call to assignUserRoundRobin or subsequent logic:', assignError);
+          // Continue with message insertion even if assignment fails
+        }
+      }
+      
+      console.log('[MessageModel] Message object before insert:', JSON.stringify(messageToInsert, null, 2));
+      // Insert the message
       const { data, error } = await supabase
         .from('messages')
         .insert([messageToInsert])
@@ -73,29 +115,48 @@ const Message = {
         console.error('Supabase insert error in logMessage:', error);
         throw new Error(`Error logging message: ${error.message}`);
       }
-      return data ? data[0] : null;
+
+      // If this is a new assignment and the message was successfully inserted
+      if (data && data[0] && data[0].assigned_to_user_id && direction === 'incoming') {
+        console.log(`[MessageModel] Message ${data[0].id} inserted with assigned_to_user_id: ${data[0].assigned_to_user_id}. Updating desk ${desk_id}.`);
+        // Update the desk's last_assigned_user_id field
+        const { error: updateError } = await supabase
+          .from('desks')
+          .update({ last_assigned_user_id: data[0].assigned_to_user_id })
+          .eq('id', desk_id);
+          
+        if (updateError) {
+          console.error(`[MessageModel] Failed to update desk ${desk_id} with last_assigned_user_id ${data[0].assigned_to_user_id}:`, updateError);
+        } else {
+          console.log(`[MessageModel] Successfully updated desk ${desk_id} last_assigned_user_id to ${data[0].assigned_to_user_id}.`);
+        }
+      } else if (data && data[0] && !data[0].assigned_to_user_id && direction === 'incoming') {
+        console.warn(`[MessageModel] Message ${data[0].id} inserted WITHOUT an assigned_to_user_id for an incoming message to desk ${desk_id}.`);
+      }
+      
+      const savedMessage = data ? data[0] : null;
+      
+      // If this is an incoming email, check if it's a reply to a closed ticket
+      if (savedMessage && direction === 'incoming' && 
+          microsoft_conversation_id && 
+          !ticket_id) {
+        try {
+          // Check if this message is a reply to a closed message/ticket
+          const shouldProcess = await Message.checkIfReplyToClosedTicket(savedMessage, desk_id);
+          if (shouldProcess) {
+            console.log(`Message ${microsoft_message_id} is flagged as reply to closed ticket`);
+          }
+        } catch (error) {
+          console.error('Error checking if message is reply to closed ticket:', error);
+          // Don't throw here, we still want the message to be saved
+        }
+      }
+      
+      return savedMessage;
     } catch (error) {
       console.error('Catch block error in logMessage:', error);
       throw error; // Re-throw to be caught by caller
     }
-    
-    // If this is an incoming email, check if it's a reply to a closed ticket
-    if (messageData.direction === 'incoming' && 
-        messageData.microsoft_conversation_id && 
-        !messageData.ticket_id) {
-      try {
-        // Check if this message is a reply to a closed message/ticket
-        const shouldProcess = await Message.checkIfReplyToClosedTicket(data[0], messageData.desk_id);
-        if (shouldProcess) {
-          console.log(`Message ${messageData.microsoft_message_id} is flagged as reply to closed ticket`);
-        }
-      } catch (error) {
-        console.error('Error checking if message is reply to closed ticket:', error);
-        // Don't throw here, we still want the message to be saved
-      }
-    }
-    
-    return data ? data[0] : null;
   },
   
   /**

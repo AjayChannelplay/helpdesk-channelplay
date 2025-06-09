@@ -7,6 +7,7 @@ const path = require('path');
 const { supabase } = require('../config/db.config');
 const axios = require('axios');
 const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
+const { assignUserRoundRobin } = require('../utils/assignment.utils');
 
 // Utility function to extract desk ID from request (handling both camelCase and snake_case)
 const extractDeskId = (req) => {
@@ -968,13 +969,59 @@ const processWebhookNotifications = async (notifications) => {
       }
       
       const desk_id = subscriptions[0].desk_id;
-      console.log(`✅ Found desk: ${desk_id}`);
+      console.log(`✅ Found desk: ${desk_id} for subscription ${subscriptionId}`);
+      
+      // CRITICAL DEBUG INFO: Log full desk details to verify it exists
+      const { data: deskDetails, error: deskError } = await supabase
+        .from('desks')
+        .select('*')
+        .eq('id', desk_id)
+        .single();
+        
+      if (deskError) {
+        console.error(`❌❌❌ ERROR FINDING DESK ${desk_id}:`, deskError);
+      } else {
+        console.log(`✅✅ DESK INFO for ${desk_id}:`, JSON.stringify(deskDetails));
+        console.log(`👥 Current last_assigned_user_id:`, deskDetails.last_assigned_user_id || 'NULL');
+      }
+      
+      // Get all users assigned to this desk
+      const { data: deskUsers, error: deskUsersError } = await supabase
+        .from('desk_assignments')
+        .select('user_id')
+        .eq('desk_id', desk_id);
+        
+      if (deskUsersError) {
+        console.error(`❌❌❌ ERROR FINDING DESK USERS FOR ${desk_id}:`, deskUsersError);
+      } else if (!deskUsers || deskUsers.length === 0) {
+        console.warn(`⚠️⚠️ NO USERS ASSIGNED TO DESK ${desk_id}. Round-robin assignment will fail!`);
+      } else {
+        console.log(`👥👥 FOUND ${deskUsers.length} USERS assigned to desk ${desk_id}:`, JSON.stringify(deskUsers));
+      }
       
       // Get message details
       if (resourceData.id) {
-        console.log(`📧 Processing message: ${resourceData.id}`);
-        const result = await processNewIncomingEmail(resourceData.id, desk_id);
-        console.log(`📝 Message processing result: ${result ? 'Success' : 'Failed'}`);
+        console.log(`📧 Processing message: ${resourceData.id} for desk ${desk_id}`);
+        
+        try {
+          // First, let's check if this message already exists in our database
+          const { data: existingMsg } = await supabase
+            .from('messages')
+            .select('*')
+            .eq('microsoft_message_id', resourceData.id);
+            
+          if (existingMsg && existingMsg.length > 0) {
+            console.log(`📧 Message ${resourceData.id} already exists in database with ID ${existingMsg[0].id}`);
+          } else {
+            console.log(`📧 Message ${resourceData.id} is new and needs to be created in database`);
+          }
+          
+          const result = await processNewIncomingEmail(resourceData.id, desk_id);
+          console.log(`📝 Message processing result: ${result ? 'Success' : 'Failed'}`);
+          
+        } catch (msgError) {
+          console.error(`❌ ERROR PROCESSING MESSAGE:`, msgError);
+        }
       } else {
         console.warn('⚠️ No message ID in notification, skipping processing');
       }
@@ -1021,9 +1068,57 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
     console.log(`✓ From: ${email.from?.emailAddress?.address || 'Unknown'}`);
     console.log(`✓ Has attachments: ${email.hasAttachments ? 'Yes' : 'No'}`);
     
-    // If no attachments, exit early
+    // This section creates/updates the message record even if there are no attachments
+    // STEP 1.5: CREATE OR UPDATE MESSAGE RECORD
+    console.log('\n📝 STEP 1.5: CREATING/UPDATING MESSAGE RECORD WITH ROUND-ROBIN ASSIGNMENT');
+    
+    try {
+      // First check if message already exists
+      const { data: existingMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('microsoft_message_id', messageId);
+        
+      if (existingMessages && existingMessages.length > 0) {
+        console.log(`\n✅ Message already exists in database with ID: ${existingMessages[0].id}`);
+      } else {
+        // Message doesn't exist yet, create it with proper fields
+        console.log('\n✨ Creating new message record with round-robin assignment');
+        
+        // Prepare message data
+        const messageData = {
+          microsoft_message_id: messageId,
+          microsoft_conversation_id: email.conversationId,
+          subject: email.subject || '(No Subject)',
+          body: email.body?.content || '',
+          body_type: email.body?.contentType || 'text',
+          sender_email: email.from?.emailAddress?.address || '',
+          sender_name: email.from?.emailAddress?.name || '',
+          recipients: email.toRecipients?.map(r => r.emailAddress?.address).filter(Boolean) || [],
+          received_date: email.receivedDateTime,
+          desk_id: desk_id, // Crucial for round-robin assignment
+          direction: 'incoming',
+          is_read: email.isRead || false
+        };
+        
+        console.log('\n📥 Prepared message data (before assignment):', JSON.stringify(messageData, null, 2));
+        
+        // Use the message model which handles round-robin assignment
+        try {
+          const savedMessage = await Message.logMessage(messageData);
+          console.log(`\n✅✅ Message created successfully with ID: ${savedMessage?.id || 'unknown'}`);
+          console.log(`\n👥 Assigned to user_id: ${savedMessage?.assigned_to_user_id || 'NULL'}`);
+        } catch (msgErr) {
+          console.error('\n❌ ERROR creating message with round-robin assignment:', msgErr);
+        }
+      }
+    } catch (msgDbErr) {
+      console.error('\n❌ DATABASE ERROR while checking/creating message:', msgDbErr);
+    }
+    
+    // If no attachments, we're done after creating the message
     if (!email.hasAttachments) {
-      console.log('\n⚠️ No attachments in this email. Skipping attachment processing.');
+      console.log('\n⚠️ No attachments in this email. Finished processing.');
       return true;
     }
     

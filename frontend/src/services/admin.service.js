@@ -22,9 +22,7 @@ const AdminService = {
 
   createUser: async (userData) => {
     try {
-      const response = await axios.post(`${ADMIN_API_URL}/users`, userData, {
-        headers: AuthService.getAuthHeader(),
-      });
+      const response = await API.post('/admin/users', userData);
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
