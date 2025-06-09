@@ -9,6 +9,7 @@ import AuthService from './services/auth.service';
 
 // Components - Auth
 import Login from './components/auth/Login';
+import AccessHandler from './components/auth/AccessHandler';
 
 // Components - Tickets
 import TicketsPage from './components/tickets/TicketsPage';
@@ -85,6 +86,7 @@ function App() {
           <main className="main-content">
             <Routes>
               <Route path="/login" element={<Login onLogin={handleLogin} />} />
+              <Route path="/access" element={<AccessHandler onLogin={handleLogin} />} />
               
               {/* Protected routes will go here */}
               <Route path="/" element={<ProtectedRoute><Navigate to="/tickets" replace /></ProtectedRoute>} />

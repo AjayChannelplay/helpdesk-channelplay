@@ -101,16 +101,18 @@ exports.login = async (req, res) => {
       console.log(`[auth.controller] Agent login - assigned desks:`, assignedDesks);
     }
 
-    // Return user data and token
+    // Return user data and token with naming consistent with SSO endpoint
     res.status(200).json({
       message: 'Login successful',
       user: {
         id: user.id,
-        username: user.username,
         email: user.email,
+        name: user.name || user.username || user.email.split('@')[0],
+        display_name: user.display_name || user.name || user.username || user.email.split('@')[0],
         role: user.role,
-        ...(user.role === 'agent' && { assignedDesks: assignedDesks || [] })
+        assignedDesks: assignedDesks || []
       },
+      assignedDesks: assignedDesks || [],
       token
     });
   } catch (error) {
