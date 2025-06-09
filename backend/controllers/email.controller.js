@@ -167,6 +167,7 @@ exports.replyToEmail = async (req, res) => {
     
     // Log attachment information
     console.log(`Processing ${attachments?.length || 0} attachments for email reply`);
+    console.log('Request Files object:', JSON.stringify(req.files?.map(f => ({ name: f.originalname, size: f.size, mimetype: f.mimetype })) || [], null, 2));
     
     // Prepare the attachment payload for Microsoft Graph API
     let attachmentPayload = [];
@@ -253,6 +254,13 @@ exports.replyToEmail = async (req, res) => {
       const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
       const deskDisplayName = senderGraphUser.displayName;
 
+      // Log attachment information right before database save
+      console.log(`📎 CONFIRMATION: has_attachments=${attachments.length > 0}, attachment count=${attachments.length}`);
+      console.log(`📎 CONFIRMATION: s3AttachmentUrls length=${s3AttachmentUrls.length}`);
+      if (s3AttachmentUrls.length > 0) {
+        console.log(`📎 First attachment: ${JSON.stringify(s3AttachmentUrls[0])}`);
+      }
+      
       const messageDataForDb = {
         desk_id,
         ticket_id: null, // Not applicable for direct replies
@@ -276,8 +284,11 @@ exports.replyToEmail = async (req, res) => {
         attachments_urls: s3AttachmentUrls, // Store S3 URLs in the database
       };
 
-      await Message.logMessage(messageDataForDb);
+      const result = await Message.logMessage(messageDataForDb);
       console.log(`[EmailCtrl] Successfully logged outgoing reply for original email ${emailId} to DB.`);
+      console.log(`[EmailCtrl] Message ID in database: ${result?.id || 'unknown'}`);
+      console.log(`[EmailCtrl] Confirmed has_attachments in DB: ${result?.has_attachments || false}`);
+      console.log(`[EmailCtrl] Confirmed attachments_urls length in DB: ${(result?.attachments_urls || []).length}`);
 
     } catch (dbError) {
       console.error(`[EmailCtrl] Failed to log outgoing reply for email ${emailId} to database:`, dbError.message, dbError.stack);
@@ -897,8 +908,9 @@ exports.sendEmail = async (req, res) => {
 // Endpoint for Microsoft Graph webhook notification
 exports.handleIncomingNotification = async (req, res) => {
   try {
+    console.log('\n🚀🚀🚀 ENTERED handleIncomingNotification 🚀🚀🚀');
     console.log('====================================================');
-    console.log('📨 INCOMING EMAIL WEBHOOK NOTIFICATION RECEIVED');
+    console.log('📨 INCOMING EMAIL WEBHOOK NOTIFICATION RECEIVED (handleIncomingNotification)');
     console.log('====================================================');
     
     // Microsoft webhook validation requires responding to subscription validation
@@ -916,7 +928,7 @@ exports.handleIncomingNotification = async (req, res) => {
     console.log(`📫 Found ${notifications.length} notifications to process`);
     
     if (notifications.length > 0) {
-      console.log('⚡ Starting async processing of notifications...');
+      console.log('⚡ Starting async processing of notifications... (handleIncomingNotification)');
       
       // Process notifications asynchronously so we can respond quickly to the webhook
       processWebhookNotifications(notifications).catch(err => {
@@ -937,9 +949,10 @@ exports.handleIncomingNotification = async (req, res) => {
 
 // Process webhook notifications asynchronously
 const processWebhookNotifications = async (notifications) => {
+  console.log('\n📬📬📬 ENTERED processWebhookNotifications 📬📬📬');
   try {
     console.log('===========================================================');
-    console.log(`📥 PROCESSING ${notifications.length} WEBHOOK NOTIFICATIONS`);
+    console.log(`📥 PROCESSING ${notifications.length} WEBHOOK NOTIFICATIONS (processWebhookNotifications)`);
     console.log('===========================================================');
 
     for (let i = 0; i < notifications.length; i++) {
@@ -1001,26 +1014,34 @@ const processWebhookNotifications = async (notifications) => {
       
       // Get message details
       if (resourceData.id) {
-        console.log(`📧 Processing message: ${resourceData.id} for desk ${desk_id}`);
+        console.log(`📧 Processing message: ${resourceData.id} for desk ${desk_id} (processWebhookNotifications)`);
         
         try {
           // First, let's check if this message already exists in our database
-          const { data: existingMsg } = await supabase
+          const { data: existingMsg, error: existingMsgError } = await supabase
             .from('messages')
-            .select('*')
-            .eq('microsoft_message_id', resourceData.id);
-            
-          if (existingMsg && existingMsg.length > 0) {
-            console.log(`📧 Message ${resourceData.id} already exists in database with ID ${existingMsg[0].id}`);
-          } else {
-            console.log(`📧 Message ${resourceData.id} is new and needs to be created in database`);
+            .select('id') // Only need id to check for existence
+            .eq('microsoft_message_id', resourceData.id)
+            .maybeSingle(); // Use maybeSingle to handle 0 or 1 result without error
+
+          if (existingMsgError) {
+            console.error(`❌ DB_ERROR checking for existing message ${resourceData.id}:`, existingMsgError);
+            // Decide if you want to continue or skip this notification
+            continue; // Skip to next notification on DB error
           }
-          
-          const result = await processNewIncomingEmail(resourceData.id, desk_id);
-          console.log(`📝 Message processing result: ${result ? 'Success' : 'Failed'}`);
-          
-        } catch (msgError) {
-          console.error(`❌ ERROR PROCESSING MESSAGE:`, msgError);
+            
+          if (existingMsg) {
+            console.log(`📬 Message ${resourceData.id} already exists in database with ID ${existingMsg.id}. Skipping new email processing. (processWebhookNotifications)`);
+          } else {
+            console.log(`✨ Message ${resourceData.id} is new. Calling processNewIncomingEmail. (processWebhookNotifications)`);
+            // Process each new email individually
+            // No need to await here as processNewIncomingEmail is async and handles its own errors
+            processNewIncomingEmail(resourceData.id, desk_id).catch(emailProcessingError => {
+              console.error(`❌ ASYNC_ERROR from processNewIncomingEmail for ${resourceData.id}:`, emailProcessingError);
+            });
+          }
+        } catch (msgProcessingError) {
+          console.error(`❌ UNCAUGHT_ERROR during message check/dispatch for ${resourceData.id}:`, msgProcessingError);
         }
       } else {
         console.warn('⚠️ No message ID in notification, skipping processing');
@@ -1037,8 +1058,9 @@ const processWebhookNotifications = async (notifications) => {
 
 // Process a new incoming email
 const processNewIncomingEmail = async (messageId, desk_id) => {
+  console.log('\n📩📩📩 ENTERED processNewIncomingEmail 📩📩📩 - Message ID:', messageId, 'Desk ID:', desk_id);
   console.log('======================================================');
-  console.log(`🔄 STARTING INCOMING EMAIL ATTACHMENT PIPELINE`);
+  console.log(`🔄 STARTING INCOMING EMAIL ATTACHMENT PIPELINE (processNewIncomingEmail)`);
   console.log(`📧 Message ID: ${messageId} | Desk ID: ${desk_id}`);
   console.log('======================================================');
 
@@ -1290,10 +1312,12 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
           
           // Perform the database update
           console.log(`Updating message ${targetMessage.id} with attachment URLs...`);
+          const attachmentUrlsToSave = s3UploadResults.map(att => att.url);
+          console.log('Attachment URLs to save (conversationId path):', JSON.stringify(attachmentUrlsToSave));
           const { error: updateErr } = await supabase
             .from('messages')
             .update({ 
-              attachments_urls: s3UploadResults,
+              attachments_urls: attachmentUrlsToSave, // Save only URLs
               has_attachments: true,
               microsoft_message_id: messageId // Update the message ID too
             })
@@ -1338,10 +1362,12 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
     
     // Perform the update
     console.log(`Updating message ${message.id} with attachment URLs...`);
+    const attachmentUrlsToSave = s3UploadResults.map(att => att.url);
+    console.log('Attachment URLs to save (messageId path):', JSON.stringify(attachmentUrlsToSave));
     const { error: updateError } = await supabase
       .from('messages')
       .update({ 
-        attachments_urls: s3UploadResults,
+        attachments_urls: attachmentUrlsToSave, 
         has_attachments: true
       })
       .eq('id', message.id);

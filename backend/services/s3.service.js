@@ -58,9 +58,16 @@ const uploadFileToS3 = async (file, folder = 'attachments') => {
   console.log(`🔄 Starting upload for file: ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
   
   try {
-    // Create a unique file name to prevent collisions
-    const fileExtension = path.extname(file.originalname);
-    const fileName = `${folder}/${uuidv4()}${fileExtension}`;
+    // Create a unique file name to prevent collisions and sanitize the extension
+    const fileExtension = path.extname(file.originalname)
+      .toLowerCase()  // Convert extension to lowercase
+      .replace(/[^a-z0-9.]/g, ''); // Remove any non-alphanumeric chars except period
+    
+    // Using UUID to avoid any filename collision issues
+    const fileName = `${folder}/${uuidv4()}${fileExtension ? `.${fileExtension.replace(/^\./,'')}` : ''}`;
+    
+    // Log sanitized filename
+    console.log(`🔄 Original filename: ${file.originalname}, Sanitized S3 path: ${fileName}`);
     
     console.log(`📂 Target path in S3: ${fileName}`);
     
@@ -84,7 +91,7 @@ const uploadFileToS3 = async (file, folder = 'attachments') => {
       Body: file.buffer,
       ContentType: file.mimetype,
       // ACL: 'public-read', // Removed ACL as bucket doesn't support it
-      ContentDisposition: `inline; filename="${file.originalname}"` // Original name when downloaded
+      ContentDisposition: `inline; filename="${encodeURIComponent(file.originalname)}"` // URL encode the filename to avoid special character issues
     };
     
     console.log('S3 Upload Params:', JSON.stringify(params, (key, value) => (key === 'Body' ? '(buffer content omitted)' : value), 2));

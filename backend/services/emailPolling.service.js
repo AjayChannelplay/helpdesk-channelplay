@@ -3,6 +3,9 @@ const { supabase } = require('../config/db.config');
 const Message = require('../models/message.model');
 // TODO: Refactor getMicrosoftAccessToken into a shared utility to avoid potential circular dependencies
 const { getMicrosoftAccessToken } = require('../utils/microsoftGraph.utils');
+const { uploadFileToS3 } = require('../services/s3.service');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const POLLING_INTERVAL_MS = 30 * 1000; // 30 seconds
 let pollingTimeoutId = null;
@@ -34,6 +37,7 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
 
     for (const email of emails) {
       try {
+        // Initialize message data structure
         const messageData = {
           desk_id: deskIntegration.desk_id,
           microsoft_message_id: email.id,
@@ -54,11 +58,114 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
           direction: 'incoming',
           in_reply_to_microsoft_id: null, // TODO: Implement robust reply detection using email.references or internetMessageHeaders 
           is_internal: false,
+          attachments_urls: [], // Initialize as empty array
         };
 
+        // Process attachments if any
+        let attachmentUrlsToSave = [];
+        if (email.hasAttachments) {
+          console.log(`[Polling] Email ${email.id} has attachments. Fetching and processing...`);
+          
+          try {
+            // Get attachments list from Microsoft Graph
+            const attachmentsResponse = await axios.get(
+              `https://graph.microsoft.com/v1.0/me/messages/${email.id}/attachments`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            
+            const attachments = attachmentsResponse.data.value || [];
+            console.log(`[Polling] Found ${attachments.length} attachments for email ${email.id}`);
+            
+            const s3UploadResults = [];
+            
+            // Process each attachment
+            for (const attachment of attachments) {
+              try {
+                // Skip inline attachments like embedded images
+                if (attachment.isInline) {
+                  console.log(`[Polling] Skipping inline attachment ${attachment.name}`);
+                  continue;
+                }
+
+                console.log(`[Polling] Processing attachment: ${attachment.name}`);
+                
+                // Extract the file content and convert from base64
+                const fileContent = Buffer.from(attachment.contentBytes, 'base64');
+                
+                // Create a file object similar to multer for S3 upload
+                const file = {
+                  originalname: attachment.name,
+                  buffer: fileContent,
+                  mimetype: attachment.contentType,
+                  size: fileContent.length
+                };
+                
+                // Upload to S3
+                console.log(`[Polling] Uploading ${file.originalname} (${file.size} bytes) to S3`);
+                const s3Result = await uploadFileToS3(file, 'email-attachments');
+                console.log(`[Polling] S3 Upload result:`, s3Result.url);
+                
+                // Add to results
+                s3UploadResults.push({
+                  url: s3Result.url,
+                  name: attachment.name,       // from Graph API attachment
+                  contentType: attachment.contentType, // from Graph API attachment
+                  size: file.size,             // Corrected size: size of the decoded file content
+                  s3Key: s3Result.s3Key,       // from S3 upload result
+                  originalName: attachment.name  // from Graph API attachment
+                });
+              } catch (attachmentError) {
+                console.error(`[Polling] Error processing attachment ${attachment.name}:`, attachmentError);
+              }
+            }
+            
+            // Store complete attachment objects, not just URLs
+            // This ensures the frontend has all the metadata it needs
+            attachmentUrlsToSave = s3UploadResults.map(att => ({
+              url: att.url,
+              name: att.name,
+              contentType: att.contentType,
+              size: att.size,
+              s3Key: att.s3Key,
+              originalName: att.originalName
+            }));
+            console.log(`[Polling] Attachment metadata to save:`, JSON.stringify(attachmentUrlsToSave));
+            
+            // Add attachments to message data
+            messageData.attachments_urls = attachmentUrlsToSave;
+          } catch (attachmentsError) {
+            console.error(`[Polling] Error fetching/processing attachments for email ${email.id}:`, attachmentsError);
+          }
+        }
+        
+        // Create or update the message in the database
         const savedMessage = await Message.findOrCreateByMicrosoftId(messageData);
+        
         if (savedMessage) {
           console.log(`[Polling] Successfully processed and stored/updated email ${email.id} for desk ${deskIntegration.desk_id}`);
+          
+          // If there are attachment URLs but they weren't saved in the message model,
+          // update the message record directly to ensure they're saved
+          if (attachmentUrlsToSave.length > 0) {
+            try {
+              const { error: updateError } = await supabase
+                .from('messages')
+                .update({
+                  attachments_urls: attachmentUrlsToSave,
+                  has_attachments: true
+                })
+                .eq('microsoft_message_id', email.id);
+                
+              if (updateError) {
+                console.error(`[Polling] Error updating attachment URLs in database:`, updateError);
+              } else {
+                console.log(`[Polling] Successfully updated attachment URLs for message ${email.id}`);
+              }
+            } catch (dbError) {
+              console.error(`[Polling] Database error while updating attachment URLs:`, dbError);
+            }
+          }
+          
           // Mark email as read on the server AFTER successful processing
           await axios.patch(`${graphApiUrl}/${email.id}`, 
             { isRead: true }, 

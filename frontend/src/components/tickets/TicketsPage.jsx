@@ -38,8 +38,8 @@ const TicketsPage = () => {
   const [conversation, setConversation] = useState([]);
   const [replyText, setReplyText] = useState('');
   
-  // Auto-refresh settings
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  // Auto-refresh settings - always enabled by default for conversations (like ticket list)
+  const [autoRefreshEnabled] = useState(true); // Removed setter to keep it always enabled
   const [refreshInterval, setRefreshInterval] = useState(30); // seconds
   
   // UI state
@@ -558,7 +558,33 @@ const TicketsPage = () => {
   }, [selectedDeskId, autoRefreshEnabled, refreshInterval, showAllEmails, fetchTickets, fetchAllEmails, fetchUnreadEmails, fetchClosedEmails]);
 
   // Create a fetchConversationData function that can be called both initially and for auto-refresh
-  const fetchConversationData = useCallback(async (ticket) => {
+  // Use a ref to track if we've just sent a reply and need to force refresh
+  const justSentReply = useRef(false);
+
+  // Function to refresh email conversation after reply
+  const refreshEmailConversation = useCallback(async (emailId, deskId, replyContent) => {
+    try {
+      console.log('Refreshing email conversation after reply, email ID:', emailId);
+      
+      // First, try to get any new conversation data from the server
+      const response = await API.get(`/emails/${emailId}?desk_id=${encodeURIComponent(deskId)}`);
+      
+      if (response.data && response.data.messages) {
+        console.log('Got fresh email data with messages:', response.data.messages.length);
+        // Return updated messages from the server if available
+        return response.data.messages;
+      }
+      
+      // If we get here, we couldn't get updated messages from server, so we'll create a synthetic update
+      console.log('No fresh data from server, creating synthetic update');
+      return null;
+    } catch (err) {
+      console.error('Error refreshing email conversation:', err);
+      return null;
+    }
+  }, []);
+
+  const fetchConversationData = useCallback(async (ticket, forceRefresh = false, newReplyContent = null) => {
     if (!ticket) return;
     
     try {
@@ -566,16 +592,79 @@ const TicketsPage = () => {
       setError(null); // Clear any previous errors
       console.log('Fetching conversation data for ticket:', ticket.id);
       
-      // For email conversations, use the messages array that was already fetched
-      if (ticket.id && ticket.id.toString().startsWith('email-') && ticket.messages) {
+      // For email conversations without forced refresh
+      if (ticket.id && ticket.id.toString().startsWith('email-') && ticket.messages && !forceRefresh) {
         console.log('Using existing conversation messages:', ticket.messages.length);
         setConversation(ticket.messages);
       }
-      // For regular tickets, fetch conversation from server
-      else if (ticket.id && !ticket.id.toString().startsWith('email-')) {
+      // Either a regular ticket or we need to force refresh for an email
+      else {
         const ticketId = ticket.id;
-        console.log('Fetching conversation for ticket ID:', ticketId);
+        console.log(`Fetching ${forceRefresh ? 'fresh' : 'regular'} conversation for ticket ID:`, ticketId);
         
+        // Special handling for email tickets that need fresh data after a reply
+        if (forceRefresh && ticket.id.toString().startsWith('email-')) {
+          const emailId = ticket.id.replace('email-', '');
+          console.log('Forcing refresh for email conversation:', emailId);
+          
+          // Try to get fresh email data
+          const freshMessages = await refreshEmailConversation(emailId, selectedDeskId, newReplyContent);
+          
+          if (freshMessages) {
+            // We got fresh message data from server - use it
+            console.log('Using fresh message data from server');
+            setConversation(freshMessages);
+            
+            // Also update the ticket.messages so future views are up to date
+            if (selectedTicket && selectedTicket.id === ticket.id) {
+              setSelectedTicket({
+                ...selectedTicket,
+                messages: freshMessages
+              });
+            }
+            
+            setLoading(false);
+            return; // Exit early since we've handled everything
+          }
+          
+          // If we couldn't get fresh data, we'll add our reply to the existing messages
+          if (newReplyContent && ticket.messages) {
+            console.log('Adding synthetic reply to conversation');
+            
+            // Clone the messages array
+            const updatedMessages = [...ticket.messages];
+            
+            // Add our reply as a new message
+            const newReply = {
+              id: `temp-${Date.now()}`,
+              subject: ticket.subject || 'Re: ' + (ticket.subject || ''),
+              bodyPreview: newReplyContent,
+              body: { content: newReplyContent },
+              from: { emailAddress: { name: userInfo?.name || 'Support Agent', address: userInfo?.email || '' } },
+              sentDateTime: new Date().toISOString(),
+              // Add other fields as needed
+              isFromCurrentUser: true
+            };
+            
+            updatedMessages.push(newReply);
+            
+            // Update the conversation and selected ticket
+            setConversation(updatedMessages);
+            
+            // Also update the selected ticket to include our new message
+            if (selectedTicket && selectedTicket.id === ticket.id) {
+              setSelectedTicket({
+                ...selectedTicket,
+                messages: updatedMessages
+              });
+            }
+            
+            setLoading(false);
+            return; // Exit early
+          }
+        }
+        
+        // Standard path for regular tickets or if other approaches fail
         const conversationData = await EmailService.fetchConversation(ticketId);
         console.log('Conversation data received:', conversationData);
         
@@ -687,6 +776,10 @@ const TicketsPage = () => {
         
         // Mark email as read after replying
         await EmailService.markAsRead(emailId, selectedDeskId);
+        
+        // Force refresh the conversation with the latest data and pass the reply content
+        // so we can add it to the conversation even if server refresh fails
+        fetchConversationData(selectedTicket, true, replyText);
         
         // Set success message
         setSuccess('Email reply sent successfully!');
@@ -1209,14 +1302,7 @@ const TicketsPage = () => {
                     <FaSyncAlt className="me-1" /> Refresh
                   </Button>
                   
-                  <Button 
-                    variant={autoRefreshEnabled ? "outline-success" : "outline-secondary"}
-                    size="sm" 
-                    className="me-2"
-                    onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
-                  >
-                    <FaSyncAlt className="me-1" /> {autoRefreshEnabled ? 'Auto: ON' : 'Auto: OFF'}
-                  </Button>
+                  {/* Auto-refresh is always enabled by default - removed toggle button */}
                   
                   {selectedTicket.isEmail ? (
                     <></>
@@ -1400,23 +1486,36 @@ const TicketsPage = () => {
                                       };
                                       
                                       return (
-                                        <div key={`ms-${attachment.id || i}`} className="attachment-item p-2 border rounded mb-2 d-flex align-items-center">
-                                          <div className="attachment-icon me-2">
-                                            {icon}
+                                        <div key={`ms-${attachment.id || i}`} className="attachment-item p-2 border rounded mb-2">
+                                          <div className="d-flex align-items-center mb-2">
+                                            <div className="attachment-icon me-2">
+                                              {/* Show file icon if not an image or if URL is missing */}
+                                              {!(attachment.contentType && attachment.contentType.startsWith('image/') && attachment.url) && icon}
+                                            </div>
+                                            <div className="attachment-details flex-grow-1">
+                                              <div className="attachment-name">{attachment.name}</div>
+                                              <small className="text-muted">{formatFileSize(attachment.size)}</small>
+                                            </div>
+                                            <div className="attachment-actions">
+                                              <Button 
+                                                variant="outline-primary" 
+                                                size="sm"
+                                                onClick={() => handleS3Download(attachment, message.desk_id)}
+                                              >
+                                                <FaDownload /> Download
+                                              </Button>
+                                            </div>
                                           </div>
-                                          <div className="attachment-details flex-grow-1">
-                                            <div className="attachment-name">{attachment.name}</div>
-                                            <small className="text-muted">{formatFileSize(attachment.size)}</small>
-                                          </div>
-                                          <div className="attachment-actions">
-                                            <Button 
-                                              variant="outline-primary" 
-                                              size="sm"
-                                              onClick={() => handleS3Download(attachment, message.desk_id)}
-                                            >
-                                              <FaDownload /> Download
-                                            </Button>
-                                          </div>
+                                          {/* Image Preview Area */}
+                                          {attachment.contentType && attachment.contentType.startsWith('image/') && attachment.url && (
+                                            <div className="attachment-preview mt-2 text-center">
+                                              <img 
+                                                src={attachment.url} 
+                                                alt={`Preview of ${attachment.name}`} 
+                                                style={{ maxWidth: '100%', maxHeight: '200px', border: '1px solid #ddd', borderRadius: '4px' }} 
+                                              />
+                                            </div>
+                                          )}
                                         </div>
                                       );
                                     })}
