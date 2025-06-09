@@ -8,10 +8,10 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// The secret key for AES-256 decryption
-const SECRET_KEY = 'dbcd6f9d779dfb85cbdb1fc1c15010dc5cb508414ab452b8ccece1cfb192c877';
-// Convert hex string to buffer for crypto operations
-const KEY_BUFFER = Buffer.from(SECRET_KEY, 'hex');
+// The secret key for AES-256 decryption from environment variables
+const SECRET_KEY = process.env.AES_SECRET_KEY || 'channelplay_1office_helpdesk_prd';
+// Convert text string to buffer for crypto operations - using utf8 encoding
+const KEY_BUFFER = Buffer.from(SECRET_KEY, 'utf8');
 
 // JWT settings
 const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key';
