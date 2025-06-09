@@ -1,12 +1,15 @@
 const crypto = require('crypto');
 
-// The email to encrypt - using admin@gmail.com as requested
-const email = 'admin@gmail.com';
+// The email to encrypt - using harshit@channelplay.in as requested
+const email = 'harshit@channelplay.in';
 
-// The secret key for AES-256 encryption
-const SECRET_KEY = 'dbcd6f9d779dfb85cbdb1fc1c15010dc5cb508414ab452b8ccece1cfb192c877';
-// Convert hex string to buffer for crypto operations
-const KEY_BUFFER = Buffer.from(SECRET_KEY, 'hex');
+// Load environment variables
+require('dotenv').config();
+
+// The secret key for AES-256 encryption from environment variables (must be exactly 32 bytes/characters)
+const SECRET_KEY = process.env.AES_SECRET_KEY || 'channelplay_1office_helpdesk_prd';
+// Convert text string to buffer for crypto operations - using utf8 encoding
+const KEY_BUFFER = Buffer.from(SECRET_KEY, 'utf8');
 
 // Function to encrypt email in a format compatible with our decryption
 const encryptEmail = (email) => {
