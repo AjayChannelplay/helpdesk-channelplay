@@ -59,8 +59,8 @@ const Message = {
       in_reply_to_microsoft_id,
       sender_id: messageData.sender_id || null, // Internal user ID (agent), defaults to null
       is_internal,
-      // Include attachments_urls if provided
       attachments_urls: messageData.attachments_urls || [],
+      assigned_to_user_id: messageData.assigned_to_user_id, // Add the missing field
       // Ensure created_at and updated_at are handled by Supabase defaults or triggers
     };
 
