@@ -279,15 +279,24 @@ exports.replyToEmail = async (req, res) => {
         has_attachments: attachments.length > 0,
         direction: 'outgoing',
         in_reply_to_microsoft_id: emailId, // ID of the message being replied to
+        assigned_to_user_id: req.userId, // Assign the outgoing reply to the agent sending it
         is_read_on_server: true, // It's an outgoing message
         sender_id: req.userId, // Internal user ID of the agent who replied
         attachments_urls: s3AttachmentUrls, // Store S3 URLs in the database
       };
 
-      const result = await Message.logMessage(messageDataForDb);
+      // --- BEGIN DIAGNOSTIC LOGGING for assigned_to_user_id --- 
+      console.log(`[EmailCtrl-DEBUG] replyToEmail: req.userId = ${req.userId} (Type: ${typeof req.userId})`);
+      console.log(`[EmailCtrl-DEBUG] replyToEmail: messageDataForDb.assigned_to_user_id BEFORE logMessage = ${messageDataForDb.assigned_to_user_id} (Type: ${typeof messageDataForDb.assigned_to_user_id})`);
+      console.log(`[EmailCtrl-DEBUG] replyToEmail: messageDataForDb.sender_id BEFORE logMessage = ${messageDataForDb.sender_id} (Type: ${typeof messageDataForDb.sender_id})`);
+      // --- END DIAGNOSTIC LOGGING --- 
+
+      const loggedMessage = await Message.logMessage(messageDataForDb);
+      console.log('[EmailCtrl] Reply logged to DB:', loggedMessage?.id);
+      console.log(`[EmailCtrl-DEBUG] replyToEmail: loggedMessage.assigned_to_user_id AFTER logMessage = ${loggedMessage?.assigned_to_user_id}`);
       console.log(`[EmailCtrl] Successfully logged outgoing reply for original email ${emailId} to DB.`);
-      console.log(`[EmailCtrl] Message ID in database: ${result?.id || 'unknown'}`);
-      console.log(`[EmailCtrl] Confirmed has_attachments in DB: ${result?.has_attachments || false}`);
+      console.log(`[EmailCtrl] Message ID in database: ${loggedMessage?.id || 'unknown'}`);
+      console.log(`[EmailCtrl] Confirmed has_attachments in DB: ${loggedMessage?.has_attachments || false}`);
       console.log(`[EmailCtrl] Confirmed attachments_urls length in DB: ${(result?.attachments_urls || []).length}`);
 
     } catch (dbError) {
@@ -1509,14 +1518,29 @@ exports.fetchEmails = async (req, res) => {
     
     // Fetch messages from local DB
     try {
-      // Build query with status filter
-      const { data: dbMessages, error: dbError } = await supabase
+      // Get user ID and role from request
+      const userId = req.userId;
+      const userRole = req.userRole;
+      console.log(`[EmailCtrl] User ID: ${userId}, Role: ${userRole}`);
+      
+      // Build base query with status filter
+      let query = supabase
         .from('messages')
         .select('*')
         .eq('desk_id', deskId)
         .eq('status', statusFilter) // Filter by open or closed status
-        .order('received_at', { ascending: false }) // Get most recent messages first
-        .limit(MESSAGE_FETCH_LIMIT);
+        .order('received_at', { ascending: false }); // Get most recent messages first
+        
+      // If the user is not an admin or supervisor, filter by assigned_to_user_id
+      // Admins and supervisors can see all messages
+      if (userRole !== 'admin' && userRole !== 'supervisor') {
+        console.log(`[EmailCtrl] Filtering messages for agent ${userId}`);
+        query = query.or(`assigned_to_user_id.eq.${userId},assigned_to_user_id.is.null`);
+      } else {
+        console.log(`[EmailCtrl] Admin/supervisor ${userId} can see all messages`);
+      }
+      
+      const { data: dbMessages, error: dbError } = await query.limit(MESSAGE_FETCH_LIMIT);
 
       if (dbError) {
         console.error('[EmailCtrl] Error fetching messages from DB:', dbError.message);
@@ -1712,12 +1736,29 @@ exports.fetchConversation = async (req, res) => {
     
     console.log('Ticket found:', ticket.id, ticket.subject);
     
-    // Get messages for this ticket
-    const { data: messages, error: messagesError } = await supabase
+    // Get user ID and role from request
+    const userId = req.userId;
+    const userRole = req.userRole;
+    console.log(`[fetchConversation] User ID: ${userId}, Role: ${userRole}`);
+    
+    // Build base query for ticket messages
+    let query = supabase
       .from('messages')
       .select('*')
-      .eq('ticket_id', ticketId)
-      .order('created_at', { ascending: true });
+      .eq('ticket_id', ticketId);
+    
+    // If the user is not an admin or supervisor, filter by assigned_to_user_id
+    // Admins and supervisors can see all messages
+    if (userRole !== 'admin' && userRole !== 'supervisor') {
+      console.log(`[fetchConversation] Filtering messages for agent ${userId}`);
+      // Get messages that are either assigned to this user or not assigned yet
+      query = query.or(`assigned_to_user_id.eq.${userId},assigned_to_user_id.is.null`);
+    } else {
+      console.log(`[fetchConversation] Admin/supervisor ${userId} can see all messages`);
+    }
+    
+    // Complete the query with ordering
+    const { data: messages, error: messagesError } = await query.order('created_at', { ascending: true });
       
     console.log('Messages fetch result:', messagesError ? 'Error' : 'Success', 'Count:', messages?.length || 0);
     
