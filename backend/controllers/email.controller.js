@@ -1823,8 +1823,13 @@ exports.downloadS3Attachment = async (req, res) => {
 
     const s3ObjectStream = getS3ObjectStream(s3Key);
 
+    // Set the Content-Type header based on attachment metadata
     res.setHeader('Content-Type', attachmentMeta.contentType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${attachmentMeta.name || path.basename(s3Key)}"`);
+    
+    // Fix for ERR_INVALID_CHAR: URL encode the filename to ensure it's safe for HTTP headers
+    // RFC 6266 format for international filenames using UTF-8 encoding
+    const safeFilename = encodeURIComponent(attachmentMeta.name || path.basename(s3Key));
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
     if (attachmentMeta.size) {
       res.setHeader('Content-Length', attachmentMeta.size.toString());
     }
