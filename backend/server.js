@@ -56,6 +56,7 @@ const emailIntegrationRoutes = require('./routes/email-integration.routes');
 const adminRoutes = require('./routes/admin.routes');
 const healthRoutes = require('./routes/health.routes');
 const feedbackRoutes = require('./routes/feedback.routes');
+const agentRoutes = require('./routes/agent.routes');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -67,6 +68,7 @@ app.use('/api/email-auth', emailAuthRoutes);
 app.use('/api/email-integrations', emailIntegrationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/agents', agentRoutes);
 
 // Special route for Microsoft OAuth callback to match the redirect URI in .env
 app.get('/api/auth/microsoft/callback', (req, res) => {

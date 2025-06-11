@@ -1,4 +1,4 @@
-const db = require('../config/db.config');
+const { supabase } = require('../config/db.config'); // Ensure supabase is exported from db.config
 
 const Ticket = {
   // Create a new ticket
@@ -31,19 +31,40 @@ const Ticket = {
   
   // Find ticket by id
   findById: async (id) => {
-    const query = `
-      SELECT t.*, u1.username as creator_name, u2.username as assignee_name, d.name as desk_name
-      FROM tickets t
-      LEFT JOIN users u1 ON t.created_by = u1.id
-      LEFT JOIN users u2 ON t.assigned_to = u2.id
-      LEFT JOIN desks d ON t.desk_id = d.id
-      WHERE t.id = $1
-    `;
-    
     try {
-      const result = await db.query(query, [id]);
-      return result.rows[0];
+      const { data, error } = await supabase
+        .from('tickets')
+        .select(`
+          *,
+          creator:created_by (username),
+          assignee:assigned_to (username),
+          desk:desk_id (name)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') { // Row not found, not necessarily an error for a 'find' operation
+          return null;
+        }
+        console.error('Supabase select error in Ticket.findById:', error);
+        throw new Error(`Error finding ticket: ${error.message}`);
+      }
+      
+      // Transform the data to match the previous structure if needed, or adjust consuming code.
+      // For example, to match 'creator_name', 'assignee_name', 'desk_name':
+      if (data) {
+        return {
+          ...data,
+          creator_name: data.creator?.username,
+          assignee_name: data.assignee?.username,
+          desk_name: data.desk?.name,
+        };
+      }
+      return null;
+
     } catch (error) {
+      console.error('Exception in Ticket.findById:', error);
       throw new Error(`Error finding ticket: ${error.message}`);
     }
   },

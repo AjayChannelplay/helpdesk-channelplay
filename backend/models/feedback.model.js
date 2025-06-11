@@ -1,4 +1,4 @@
-const db = require('../config/db.config');
+const { supabase } = require('../config/db.config'); // Ensure supabase is exported from db.config
 
 const Feedback = {
   /**
@@ -9,34 +9,54 @@ const Feedback = {
    * @param {string} feedbackData.customer_email - The email of the customer who provided feedback
    * @param {string} [feedbackData.message_id] - The ID of the message that received feedback
    * @param {string} [feedbackData.comments] - Optional comments from the customer
+   * @param {string} [feedbackData.agent_id] - The ID of the agent who handled the ticket
    * @returns {Promise<Object>} The created feedback entry
    */
   create: async (feedbackData) => {
-    const { ticket_id, conversation_id, rating, customer_email, message_id, comments } = feedbackData;
-    
+    const { ticket_id, conversation_id, rating, customer_email, message_id, comments, agent_id } = feedbackData;
+
     // Basic validation
     if (!rating) {
       throw new Error('Missing required field: rating');
     }
-    
-    // Make sure we have either a ticket ID or a conversation ID
-    if (!ticket_id && !conversation_id) {
-      throw new Error('Missing required field: either ticket_id or conversation_id is required');
+
+    // Ensure we have at least a conversation_id
+    if (!conversation_id) {
+      throw new Error('Missing required field: conversation_id is required');
     }
     
-    // Insert feedback into database
-    const query = `
-      INSERT INTO feedback 
-        (ticket_id, conversation_id, rating, customer_email, message_id, comments, created_at) 
-      VALUES 
-        ($1, $2, $3, $4, $5, $6, NOW()) 
-      RETURNING *
-    `;
-    
+    // Log if we're missing a ticket_id - this is not fatal but worth noting
+    if (!ticket_id) {
+      console.log(`Warning: Creating feedback without a ticket_id. Using conversation_id ${conversation_id} only.`);
+    }
+
+    // Prepare data for Supabase insert
+    const feedbackToInsert = {
+      ticket_id,
+      conversation_id,
+      rating,
+      customer_email,
+      message_id,
+      comments,
+      agent_id,
+      // created_at is handled by default value in DB
+    };
+
     try {
-      const result = await db.query(query, [ticket_id, conversation_id, rating, customer_email, message_id, comments]);
-      return result.rows[0];
+      const { data, error } = await supabase
+        .from('feedback')
+        .insert([feedbackToInsert])
+        .select()
+        .single(); // Assuming you want to return the created record
+
+      if (error) {
+        console.error('Supabase insert error in Feedback.create:', error);
+        throw new Error(`Error creating feedback entry: ${error.message}`);
+      }
+      return data;
     } catch (error) {
+      // Catch any other errors, including those from the throw above
+      console.error('Exception in Feedback.create:', error);
       throw new Error(`Error creating feedback entry: ${error.message}`);
     }
   },

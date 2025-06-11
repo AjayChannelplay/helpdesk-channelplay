@@ -24,6 +24,10 @@ import OAuthSetup from './components/admin/oauth/OAuthSetup';
 import DeskManagement from './components/admin/desks/DeskManagement';
 import UserManagement from './components/admin/users/UserManagement';
 import DesksPage from './components/desks/DesksPage';
+
+// Components - Agent
+import AgentDashboard from './components/agent/AgentDashboard';
+import AgentFeedbackList from './components/agent/AgentFeedbackList';
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -90,11 +94,12 @@ function App() {
               
               {/* Protected routes will go here */}
               <Route path="/" element={<ProtectedRoute><Navigate to="/tickets" replace /></ProtectedRoute>} />
-              <Route path="/dashboard" element={<ProtectedRoute><div className="p-4"><h2>Dashboard</h2><p>Dashboard coming soon.</p></div></ProtectedRoute>} />
+              <Route path="/dashboard" element={<ProtectedRoute><AgentDashboard /></ProtectedRoute>} />
               <Route path="/desks" element={<ProtectedRoute><div className="p-4"><h2>Desks</h2><p>Desks management interface coming soon.</p></div></ProtectedRoute>} />
               <Route path="/desks/:deskId/tickets" element={<ProtectedRoute><TicketsPage /></ProtectedRoute>} /> {/* Updated to use TicketsPage, will filter by deskId */}
               <Route path="/tickets" element={<ProtectedRoute><TicketsPage /></ProtectedRoute>} />
               <Route path="/tickets/:id" element={<ProtectedRoute><Navigate to="/tickets" replace /></ProtectedRoute>} />
+              <Route path="/agent/feedback" element={<ProtectedRoute><AgentFeedbackList /></ProtectedRoute>} />
               
               {/* Admin routes */}
               <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
