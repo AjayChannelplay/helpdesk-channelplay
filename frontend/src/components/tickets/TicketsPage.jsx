@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
   Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip
@@ -20,6 +20,52 @@ import { API_URL } from "../../constants";
 import './TicketsPage.css';
 
 const apiUrl = API_URL;
+
+// Helper component to handle async HTML content processing with inline attachments
+const MessageHtmlContent = ({ htmlContent, message, selectedDeskId }) => {
+  const [processedHtml, setProcessedHtml] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Reference to the processHtmlWithInlineAttachments function from parent component
+  // We'll get this function as a prop passed from TicketsPage
+  const processContent = async () => {
+    if (!htmlContent || !message) {
+      setProcessedHtml('');
+      setIsLoading(false);
+      return;
+    }
+    
+    try {
+      // Get a reference to the parent component's function
+      // This is defined below in TicketsPage component
+      const result = await window.processHtmlWithInlineAttachments(htmlContent, message, selectedDeskId);
+      setProcessedHtml(result);
+    } catch (error) {
+      console.error('Error processing HTML content with attachments:', error);
+      // Fallback to the original content
+      setProcessedHtml(htmlContent || '');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Process content when component mounts or inputs change
+  useEffect(() => {
+    setIsLoading(true);
+    processContent();
+    
+    // Cleanup any resources when component unmounts
+    return () => {
+      // If we had any in-progress operations, we could cancel them here
+    };
+  }, [htmlContent, message, selectedDeskId]);
+  
+  if (isLoading) {
+    return <div className="loading-inline-content">Loading content...</div>;
+  }
+  
+  return <div dangerouslySetInnerHTML={{ __html: processedHtml }} />;
+};
 
 const TicketsPage = () => {
   const { deskId: paramDeskId } = useParams();
@@ -56,7 +102,8 @@ const TicketsPage = () => {
   const [attachments, setAttachments] = useState([]);
   const fileInputRef = useRef(null);
   const [userInfo, setUserInfo] = useState(null);
-  
+  const [processedEmailHtml, setProcessedEmailHtml] = useState('');
+
   // Helper function to find the latest message from a customer
   const getLatestCustomerMessage = (conversation) => {
     if (!conversation || conversation.length === 0) {
@@ -68,6 +115,238 @@ const TicketsPage = () => {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     
     return customerMessages.length > 0 ? customerMessages[0] : null;
+  };
+
+  // Helper function to process HTML content with inline attachments - now async to handle blob URLs
+  const processHtmlWithInlineAttachments = async (htmlContent, message, deskIdOverride) => {
+    // Allow override of selectedDeskId for when called from other components
+    const deskId = deskIdOverride || selectedDeskId;
+    console.log('[InlineProc] DIAGNOSIS - Full message object received:', JSON.stringify(message, null, 2));
+    console.log('[InlineProc] DIAGNOSIS - message.attachments_urls:', JSON.stringify(message.attachments_urls, null, 2));
+    console.log('[InlineProc] DIAGNOSIS - message.attachments (Graph API):', JSON.stringify(message.attachments, null, 2));
+
+    if (!htmlContent) return '';
+    
+    console.log('Processing HTML with inline attachments for message:', message.id);
+    
+    // Handle attachments from message - we need to process all potential sources
+    const attachments = []; // Final list of attachments to consider for replacement
+    const processedContentIds = new Set(); // To track contentIds already added
+    
+    // Process attachments from all possible locations, treating those with s3Key as S3 attachments
+    // and those without as Microsoft Graph attachments
+    const processAttachmentsArray = (sourceArray, sourceName) => {
+      if (!sourceArray || !sourceArray.length) return;
+      
+      console.log(`[InlineProc] Message has ${sourceArray.length} attachments from ${sourceName}`);
+      
+      sourceArray.forEach(att => {
+        const rawContentId = att.contentId || '';
+        // Only consider attachments that have a contentId
+        if (!rawContentId) return;
+        
+        // Normalize contentId (remove angle brackets)
+        const normalizedContentId = rawContentId.replace(/[<>]/g, '');
+        
+        // If we already processed this contentId, skip it
+        if (processedContentIds.has(normalizedContentId)) {
+          console.log(`[InlineProc] Skipping duplicate contentId ${rawContentId} from ${sourceName}`);
+          return;
+        }
+        
+        // Determine attachment type - if it has s3Key, treat it as an S3 attachment regardless of source
+        const isS3Attachment = !!att.s3Key;
+        const attachmentType = isS3Attachment ? 's3' : 'microsoft';
+        
+        // For inline images, we only want attachments explicitly marked as inline or containing image MIME types
+        // If isInline flag exists, use that, otherwise guess based on content type
+        const isImage = att.contentType?.startsWith('image/');
+        const shouldProcess = att.isInline === true || (isImage && rawContentId);
+        
+        if (shouldProcess) {
+          console.log(`[InlineProc] Processing ${attachmentType} attachment: ` + 
+            `Key=${att.s3Key || 'N/A'}, ContentID=${rawContentId}, ` + 
+            `IsInline=${att.isInline}, Type=${att.contentType}`);
+          
+          // Common properties
+          const attachment = {
+            contentId: rawContentId,
+            normalizedContentId: normalizedContentId,
+            contentType: att.contentType,
+            isInline: true
+          };
+          
+          // Add type-specific properties
+          if (isS3Attachment) {
+            attachment.type = 's3';
+            attachment.s3Key = att.s3Key;
+            attachment.url = att.url;
+          } else {
+            attachment.type = 'microsoft';
+            attachment.id = att.id;
+          }
+          
+          attachments.push(attachment);
+          processedContentIds.add(normalizedContentId);
+        } else {
+          console.log(`[InlineProc] Skipping attachment with ContentID ${rawContentId} - not inline or not an image`);
+        }
+      });
+    };
+    
+    // First try attachments_urls (from Supabase data)
+    processAttachmentsArray(message.attachments_urls, 'attachments_urls');
+    
+    // Then try attachments (could be from Graph API or could actually have S3 data)
+    processAttachmentsArray(message.attachments, 'attachments');
+    
+    console.log(`Total identified inline attachments: ${attachments.length}`);
+    
+    // If no attachments with contentId, return original content
+    if (attachments.length === 0) {
+      console.log('No inline attachments to process');
+      return htmlContent;
+    }
+    
+    // Replace cid: URLs with appropriate URLs
+    let processedHtml = htmlContent;
+    
+    // Look for different types of cid: references
+    const cidReferenceRegex = /src=['"](cid:([^'"]*))['"]|src=['"](CID:([^'"]*))['"]|url\(['"](cid:([^'"]*))['"]\)|url\(['"](CID:([^'"]*))['"]\)/gi;
+    
+    // Find all CID references in the HTML
+    const cidReferences = [];
+    let match;
+    while ((match = cidReferenceRegex.exec(htmlContent)) !== null) {
+      const fullMatch = match[0];
+      const rawCidValue = match[2] || match[4] || match[6] || match[8]; // Get the CID value from one of the capture groups
+      const cidValue = rawCidValue.replace(/:\d+$/, '');
+
+      if (cidValue) {
+        cidReferences.push({
+          fullMatch,
+          cidValue,
+          rawCidValue
+        });
+        console.log(`Found CID reference: ${cidValue}`);
+      }
+    }
+    
+    // Create a map to store cidValue -> replacementUrl mappings after fetching all attachments
+    const cidToUrlMap = new Map();
+    
+    // Process all attachments first - prefetch them and create blob URLs
+    for (const { cidValue } of cidReferences) {
+      // Extract the normalized contentId (without the possible suffix like :1)
+      const normalizedCidValue = cidValue.split(':')[0];
+      
+      // Find matching attachment
+      const matchingAttachment = attachments.find(att => {
+        // First try for exact match
+        if (att.contentId === cidValue || att.normalizedContentId === cidValue) {
+          console.log(`CID Match (Exact): HTML '${cidValue}' == Attachment '${att.contentId}'`);
+          return true;
+        }
+        
+        // Then try matching normalized value without suffix
+        if (att.normalizedContentId === normalizedCidValue) {
+          console.log(`CID Match (Normalized): HTML '${normalizedCidValue}' == Attachment '${att.normalizedContentId}'`);
+          return true;
+        }
+        
+        // Finally, try matching just the 'local part' before ':' or '@'
+        if (cidValue.includes(':') || cidValue.includes('@')) {
+          const localPartOfHtmlCid = cidValue.split(/[:@]/)[0];
+          const attachmentNormalizedCid = att.normalizedContentId.split(/[:@]/)[0];
+          
+          if (attachmentNormalizedCid === localPartOfHtmlCid) {
+            console.log(`CID Match (Attachment Local Part): Attachment '${attachmentNormalizedCid}' == Local part of HTML '${cidValue}'`);
+            return true;
+          }
+        }
+        
+        return false;
+      });
+      
+      if (matchingAttachment) {
+        console.log(`Found matching attachment for cid:${cidValue}`);
+        let replacementUrl = '';
+        
+        try {
+          // Check for S3 attachment first (preferred)
+          if (matchingAttachment.s3Key) {
+            // For S3 attachments with s3Key, use the EmailService to fetch with authentication
+            console.log(`Downloading S3 attachment with key: ${matchingAttachment.s3Key}`);
+            const blob = await EmailService.downloadS3Attachment(matchingAttachment.s3Key, deskId);
+            
+            // Create a blob URL that can be used in the img src
+            replacementUrl = URL.createObjectURL(blob);
+            console.log(`Generated blob URL for attachment: ${replacementUrl}`);
+          } else if (matchingAttachment.url && matchingAttachment.type === 's3') {
+            // For S3 attachments with direct URL - we still need to fetch with auth
+            const urlParams = new URLSearchParams(matchingAttachment.url.split('?')[1] || '');
+            const s3KeyFromUrl = urlParams.get('s3Key');
+            
+            if (s3KeyFromUrl) {
+              const blob = await EmailService.downloadS3Attachment(s3KeyFromUrl, deskId);
+              replacementUrl = URL.createObjectURL(blob);
+              console.log(`Generated blob URL from URL param s3Key: ${replacementUrl}`);
+            } else {
+              // Fallback to direct URL (may not work due to CORS/auth)
+              replacementUrl = matchingAttachment.url;
+              console.log(`Using direct attachment URL (may fail): ${replacementUrl}`);
+            }
+          } else if (matchingAttachment.type === 'microsoft' && message.id && matchingAttachment.id) {
+            // For Microsoft attachments, we also need to fetch with auth
+            try {
+              const response = await fetch(`/api/emails/${message.id}/attachments/${matchingAttachment.id}`, {
+                headers: {
+                  Authorization: `Bearer ${localStorage.getItem('token')}`
+                }
+              });
+              if (response.ok) {
+                const blob = await response.blob();
+                replacementUrl = URL.createObjectURL(blob);
+                console.log(`Generated blob URL from Microsoft attachment: ${replacementUrl}`);
+              } else {
+                console.error('Error fetching Microsoft attachment:', response.status);
+              }
+            } catch (error) {
+              console.error('Error fetching Microsoft attachment:', error);
+            }
+          }
+        } catch (error) {
+          console.error(`Error processing attachment for HTML (cid:${cidValue}):`, error);
+        }
+        
+        // Store the replacement URL in our map if we got one
+        if (replacementUrl) {
+          cidToUrlMap.set(cidValue, replacementUrl);
+        }
+      } else {
+        console.log(`No matching attachment found for cid:${cidValue}`);
+      }
+    }
+        
+    // Now that we've fetched all attachments and created blob URLs, 
+    // replace the CID references in the HTML with the blob URLs
+    let updatedHtmlContent = htmlContent;
+    
+    // Process each CID reference and replace with blob URL if available
+    for (const { cidValue } of cidReferences) {
+      const replacementUrl = cidToUrlMap.get(cidValue);
+      if (replacementUrl) {
+        const encodedCid = cidValue.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, '\\$1'); // Escape regex special chars
+        const regex = new RegExp(`src=["']cid:${encodedCid}["']`, 'gi');
+        updatedHtmlContent = updatedHtmlContent.replace(regex, `src="${replacementUrl}"`); // IMPORTANT: Use double quotes for consistency
+        console.log(`Replaced HTML cid '${cidValue}' with ${replacementUrl}`);
+      } else {
+        console.log(`No valid URL generated for cid:${cidValue}, leaving as is`);
+      }
+    }
+    
+    console.log('HTML processing complete');
+    return updatedHtmlContent;
   };
 
   // Toggle message details visibility
@@ -719,12 +998,48 @@ const TicketsPage = () => {
       setLoading(false);
     }
   }, []);
-  
+
+  // Cleanup function for blob URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      const pattern = /blob:http[^"']+/g;
+      // Extract all blob URLs from our processed HTML
+      const blobUrls = [];
+      let match;
+      
+      // Find all blob URLs in the processed HTML
+      while ((match = pattern.exec(processedEmailHtml)) !== null) {
+        blobUrls.push(match[0]);
+      }
+      
+      // Revoke all blob URLs to prevent memory leaks
+      blobUrls.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+          console.log(`Revoked blob URL: ${url}`);
+        } catch (error) {
+          console.error(`Error revoking blob URL ${url}:`, error);
+        }
+      });
+    };
+  }, [processedEmailHtml]);
+
+  // Make the process HTML function available globally for other components
+  useEffect(() => {
+    // Expose the function to the window object so child components can access it
+    window.processHtmlWithInlineAttachments = processHtmlWithInlineAttachments;
+    
+    // Clean up when component unmounts
+    return () => {
+      delete window.processHtmlWithInlineAttachments;
+    };
+  }, [selectedDeskId]); // Re-create when selectedDeskId changes
+
   // Initial load of conversation when ticket is selected
   useEffect(() => {
     fetchConversationData(selectedTicket);
   }, [selectedTicket, fetchConversationData]);
-  
+
   // Auto-refresh for conversation
   useEffect(() => {
     if (!autoRefreshEnabled || !selectedTicket) return;
@@ -1437,7 +1752,11 @@ const TicketsPage = () => {
                             </div>
                             <div className="message-body">
                               {message.body && message.body.content ? (
-                                <div dangerouslySetInnerHTML={{ __html: message.body.content }} />
+                                <MessageHtmlContent 
+                                  htmlContent={message.body.content} 
+                                  message={message} 
+                                  selectedDeskId={selectedDeskId} 
+                                />
                               ) : message.bodyPreview ? (
                                 <p>{message.bodyPreview}</p>
                               ) : (
