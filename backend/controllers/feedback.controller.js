@@ -30,7 +30,7 @@ exports.processFeedback = async (req, res) => {
     // Find the message with this conversation ID
     const { data: messages, error: messagesError } = await supabase
       .from('messages')
-      .select('ticket_id, customer_email, from_address, to_recipients')
+      .select('ticket_id, from_address, to_recipients, desk_id, assigned_to_user_id')
       .eq('microsoft_conversation_id', ticketId)
       .order('created_at', { ascending: false });
     
@@ -59,7 +59,7 @@ exports.processFeedback = async (req, res) => {
           break;
         } else if (msg.to_recipients && msg.to_recipients.length > 0) {
           // If it's an outgoing message, the customer might be in to_recipients
-          const customerRecipient = msg.to_recipients.find(r => !r.address.includes('channelplay.in'));
+          const customerRecipient = msg.to_recipients.find(r => r && typeof r.address === 'string' && !r.address.includes('channelplay.in'));
           if (customerRecipient) {
             customerEmail = customerRecipient.address;
             console.log(`Using customer email from recipient: ${customerEmail}`);
@@ -100,16 +100,33 @@ exports.processFeedback = async (req, res) => {
     // If we still couldn't find a proper ticket association, we'll still record the feedback
     // but with more generic information
     
+    // Try to find the agent for this conversation
+    let agentId = null;
+    if (ticket?.assigned_to_user_id) {
+      agentId = ticket.assigned_to_user_id;
+    } else if (messages && messages.length > 0) {
+      // Check if any message has assigned_to_user_id
+      for (const msg of messages) {
+        if (msg.assigned_to_user_id) {
+          agentId = msg.assigned_to_user_id;
+          break;
+        }
+      }
+    }
+  
     // Create feedback entry with whatever information we have
     const feedbackData = {
       ticket_id: actualTicketId || null, // Only use a valid database ID, not conversation ID directly
       conversation_id: ticketId, // Always store the conversation ID
       rating: rating,
-      customer_email: customerEmail || (ticket?.customer_email) || null,
+      customer_email: customerEmail || (ticket?.customer_email) || 'unknown@customer.com', // Fallback to unknown
       message_id: messageId || null,
-      comments: comments || null
+      comments: comments || null,
+      agent_id: agentId // Link feedback to the agent we found
     };
-    
+  
+    console.log(`Agent ID found for this feedback: ${agentId}`);
+  
     // Log for debugging
     console.log('Creating feedback with data:', {
       ticket_id: feedbackData.ticket_id,

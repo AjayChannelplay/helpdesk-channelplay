@@ -57,6 +57,19 @@ const TicketsPage = () => {
   const fileInputRef = useRef(null);
   const [userInfo, setUserInfo] = useState(null);
   
+  // Helper function to find the latest message from a customer
+  const getLatestCustomerMessage = (conversation) => {
+    if (!conversation || conversation.length === 0) {
+      return null;
+    }
+    // Filter for incoming messages and sort by date to find the latest
+    const customerMessages = conversation
+      .filter(msg => msg.direction === 'incoming')
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    return customerMessages.length > 0 ? customerMessages[0] : null;
+  };
+
   // Toggle message details visibility
   const toggleMessageDetails = (messageId) => {
     console.log('Toggle message details for:', messageId);
@@ -604,7 +617,8 @@ const TicketsPage = () => {
         
         // Special handling for email tickets that need fresh data after a reply
         if (forceRefresh && ticket.id.toString().startsWith('email-')) {
-          const emailId = ticket.id.replace('email-', '');
+          const messageToReplyTo = getLatestCustomerMessage(conversation);
+          const emailId = messageToReplyTo.microsoft_message_id || messageToReplyTo.id;
           console.log('Forcing refresh for email conversation:', emailId);
           
           // Try to get fresh email data
@@ -730,96 +744,72 @@ const TicketsPage = () => {
 
   // Handle sending a reply to a ticket or email
   const handleSendReply = async () => {
-    if (!replyText.trim()) {
-      setError('Reply cannot be empty');
+    if (!replyText.trim() && attachments.length === 0) {
+      setError('Please enter a reply or add an attachment.');
       return;
     }
-    
-    try {
-      setSending(true);
-      setError(null);
-      
-      // Check if this is an email preview (not a ticket)
-      if (selectedTicket.id && selectedTicket.id.toString().startsWith('email-')) {
-        console.log('Sending direct email reply...');
-        const emailId = selectedTicket.emailId || selectedTicket.id.replace('email-', '');
-        
-        // Get the CC recipients from the input field
-        const ccAddresses = ccRecipients.split(',').map(cc => cc.trim()).filter(cc => cc);
-        
-        // Get support agent name and email from current user
-        const senderName = userInfo?.name || 'Support Agent';
-        const senderEmail = userInfo?.email;
+    if (!selectedTicket) {
+      setError('No ticket selected.');
+      return;
+    }
 
-        const formData = new FormData();
-        formData.append('emailId', emailId);
-        formData.append('desk_id', selectedDeskId); // Use desk_id to match backend expectation
-        formData.append('content', replyText);
-        ccAddresses.forEach(cc => formData.append('cc_recipients[]', cc));
-        formData.append('sender_name', senderName);
-        formData.append('sender_email', senderEmail);
-        attachments.forEach(file => {
-          formData.append('attachments', file);
-        });
-        
-        // Debug FormData contents
-        console.log('Email ID:', emailId);
-        console.log('Desk ID:', selectedDeskId);
-        console.log('FormData entries:');
-        for (let pair of formData.entries()) {
-          console.log(pair[0] + ': ' + (pair[0] === 'attachments' ? pair[1].name : pair[1]));
-        }
-        
-        // Send reply directly to the email using Microsoft Graph API
-        await EmailService.replyToEmail(formData);
-        console.log('Attachments sent:', attachments.length > 0 ? attachments.map(file => file.name).join(', ') : 'None');
-        
-        // Mark email as read after replying
+    setSending(true);
+    setError(null);
+
+    try {
+      // Step 1: Find the latest message from the customer to ensure we reply to them.
+      const messageToReplyTo = getLatestCustomerMessage(conversation);
+      if (!messageToReplyTo) {
+        setError('Cannot reply: No customer message found to reply to.');
+        setSending(false);
+        return;
+      }
+
+      // Step 2: Prepare the data for the reply.
+      const emailId = messageToReplyTo.microsoft_message_id || messageToReplyTo.id;
+      const ccAddresses = ccRecipients.split(',').map(cc => cc.trim()).filter(cc => cc);
+      const senderName = userInfo?.name || 'Support Agent';
+      const senderEmail = userInfo?.email;
+
+      const formData = new FormData();
+      formData.append('emailId', emailId);
+      formData.append('desk_id', selectedDeskId);
+      formData.append('content', replyText);
+      formData.append('sender_name', senderName);
+      formData.append('sender_email', senderEmail);
+      ccAddresses.forEach(cc => formData.append('cc_recipients[]', cc));
+      attachments.forEach(file => {
+        formData.append('attachments', file);
+      });
+
+      // Step 3: Send the reply using the email service.
+      // We use replyToEmail as it correctly handles threading in Microsoft Graph.
+      await EmailService.replyToEmail(formData);
+      
+      // Step 4: Update the UI and state.
+      setSuccess('Reply sent successfully!');
+      setReplyText('');
+      setCcRecipients('');
+      setAttachments([]);
+      
+      // Refresh the conversation to show the new reply.
+      fetchConversationData(selectedTicket, true);
+
+      // Also mark the message as read if it's a direct email.
+      if (selectedTicket.id.toString().startsWith('email-')) {
         await EmailService.markAsRead(emailId, selectedDeskId);
-        
-        // Force refresh the conversation with the latest data and pass the reply content
-        // so we can add it to the conversation even if server refresh fails
-        fetchConversationData(selectedTicket, true, replyText);
-        
-        // Set success message
-        setSuccess('Email reply sent successfully!');
-        setReplyText('');
-        setCcRecipients('');
-        setAttachments([]); // Clear attachments after successful send
-        
-        // Refresh unread emails
+        // Refresh the email list.
         if (showAllEmails) {
           await fetchAllEmails();
         } else {
           await fetchUnreadEmails();
         }
-      } else {
-        // Normal ticket reply
-        console.log('Replying to ticket:', selectedTicket.id);
-        const formData = new FormData();
-        formData.append('ticketId', selectedTicket.id);
-        formData.append('content', replyText);
-        formData.append('is_internal', false); // Internal note UI removed, defaulting to false
-        // No need to append updateStatus if it's null
-        attachments.forEach(file => {
-          formData.append('attachments', file);
-        });
-
-        await EmailService.sendEmail(formData);
-        console.log('Attachments sent for ticket reply:', attachments.length > 0 ? attachments.map(file => file.name).join(', ') : 'None');
-        
-        // Refresh conversation
-        fetchConversationData(selectedTicket);
-        setReplyText('');
-        setSuccess('Reply sent successfully!');
-        setAttachments([]); // Clear attachments after successful send
       }
-      
-      setSending(false);
     } catch (err) {
       console.error('Error sending reply:', err);
-      setSending(false);
       setError('Failed to send reply: ' + (err.response?.data?.message || err.message || 'Please try again'));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -837,7 +827,21 @@ const TicketsPage = () => {
   };
 
   // Send resolution email with feedback options
-  const resolveEmail = async (emailId) => {
+  const resolveEmail = async () => { // Removed emailId from params, will get it from conversation
+    // First, ensure we have a selected ticket and conversation
+    if (!selectedTicket || !conversation || conversation.length === 0) {
+      setError('Cannot resolve: No active ticket or conversation selected.');
+      return null;
+    }
+
+    // Get the latest customer message to resolve
+    const messageToResolve = getLatestCustomerMessage(conversation);
+    if (!messageToResolve) {
+      setError('Cannot resolve: No customer message found in the conversation.');
+      return null;
+    }
+    const emailId = messageToResolve.microsoft_message_id || messageToResolve.id;
+
     if (!emailId) {
       setError('Email ID is missing. Cannot resolve.');
       return null;
