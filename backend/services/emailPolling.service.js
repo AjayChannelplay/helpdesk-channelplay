@@ -25,6 +25,7 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
       $top: 25, // Process up to 25 unread emails per poll cycle per desk
       $select: 'id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,importance,isRead,parentFolderId,sender,internetMessageId',
       $orderby: 'receivedDateTime asc', // Process oldest unread first
+      $expand: 'attachments' // Expand attachments to get them in the initial response
     };
 
     const response = await axios.get(graphApiUrl, {
@@ -63,7 +64,37 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
 
         // Process attachments if any
         let attachmentUrlsToSave = [];
-        if (email.hasAttachments) {
+        let attachmentsToProcess = [];
+        let attachmentsSource = ''; // For logging
+
+        if (email.attachments && email.attachments.length > 0) {
+          attachmentsToProcess = email.attachments;
+          attachmentsSource = 'expanded from message object';
+          console.log(`[Polling] Email ${email.id} has ${attachmentsToProcess.length} attachments directly in message object (from $expand).`);
+        } else if (email.hasAttachments) {
+          console.log(`[Polling] Email ${email.id} has hasAttachments=true, but no attachments in expanded response. Fetching separately...`);
+          try {
+            const separateAttachmentsResponse = await axios.get(
+              `https://graph.microsoft.com/v1.0/me/messages/${email.id}/attachments`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            attachmentsToProcess = separateAttachmentsResponse.data.value || [];
+            attachmentsSource = 'fetched via separate API call';
+            if (attachmentsToProcess.length > 0) {
+              console.log(`[Polling] Found ${attachmentsToProcess.length} attachments for email ${email.id} via separate call.`);
+            } else {
+              console.log(`[Polling] Attachments API call returned no attachments for ${email.id}, despite hasAttachments being true.`);
+            }
+          } catch (fetchErr) {
+            console.error(`[Polling] Error fetching attachments separately for email ${email.id}:`, fetchErr);
+            attachmentsToProcess = [];
+          }
+        } else {
+          console.log(`[Polling] Email ${email.id} has no attachments indicated by hasAttachments flag or in expanded response.`);
+        }
+
+        if (attachmentsToProcess.length > 0) {
+          console.log(`[Polling] Processing ${attachmentsToProcess.length} attachments for email ${email.id} from source: ${attachmentsSource}`);
           console.log(`[Polling] Email ${email.id} has attachments. Fetching and processing...`);
           
           try {
@@ -73,21 +104,21 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
               { headers: { Authorization: `Bearer ${accessToken}` } }
             );
             
-            const attachments = attachmentsResponse.data.value || [];
-            console.log(`[Polling] Found ${attachments.length} attachments for email ${email.id}`);
+            // const attachments = attachmentsResponse.data.value || []; // This line is now part of the logic above
+            // console.log(`[Polling] Found ${attachments.length} attachments for email ${email.id}`);
             
             const s3UploadResults = [];
             
-            // Process each attachment
-            for (const attachment of attachments) {
+            // Process each attachment from attachmentsToProcess array
+            for (const attachment of attachmentsToProcess) {
               try {
-                // Skip inline attachments like embedded images
-                if (attachment.isInline) {
-                  console.log(`[Polling] Skipping inline attachment ${attachment.name}`);
-                  continue;
-                }
+                // REMOVED: Explicit skipping of inline attachments
+                // if (attachment.isInline) {
+                //   console.log(`[Polling] Skipping inline attachment ${attachment.name}`);
+                //   continue;
+                // }
 
-                console.log(`[Polling] Processing attachment: ${attachment.name}`);
+                console.log(`[Polling] Processing attachment: ${attachment.name}, Inline: ${attachment.isInline}, ContentID: ${attachment.contentId}`);
                 
                 // Extract the file content and convert from base64
                 const fileContent = Buffer.from(attachment.contentBytes, 'base64');
@@ -112,7 +143,9 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
                   contentType: attachment.contentType, // from Graph API attachment
                   size: file.size,             // Corrected size: size of the decoded file content
                   s3Key: s3Result.s3Key,       // from S3 upload result
-                  originalName: attachment.name  // from Graph API attachment
+                  originalName: attachment.name,  // from Graph API attachment
+                  isInline: attachment.isInline || false, // Ensure isInline is captured
+                  contentId: attachment.contentId || null // Ensure contentId is captured
                 });
               } catch (attachmentError) {
                 console.error(`[Polling] Error processing attachment ${attachment.name}:`, attachmentError);
@@ -127,7 +160,9 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
               contentType: att.contentType,
               size: att.size,
               s3Key: att.s3Key,
-              originalName: att.originalName
+              originalName: att.originalName,
+              isInline: att.isInline, // Pass through isInline
+              contentId: att.contentId // Pass through contentId
             }));
             console.log(`[Polling] Attachment metadata to save:`, JSON.stringify(attachmentUrlsToSave));
             
@@ -144,9 +179,11 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
         if (savedMessage) {
           console.log(`[Polling] Successfully processed and stored/updated email ${email.id} for desk ${deskIntegration.desk_id}`);
           
-          // If there are attachment URLs but they weren't saved in the message model,
-          // update the message record directly to ensure they're saved
-          if (attachmentUrlsToSave.length > 0) {
+          // If there are attachment URLs, ensure they are saved.
+          // The Message.findOrCreateByMicrosoftId should handle saving attachments_urls if provided in messageData.
+          // This explicit update might still be useful if findOrCreateByMicrosoftId doesn't overwrite/update attachments_urls correctly for existing messages.
+          if (attachmentUrlsToSave.length > 0 && savedMessage.attachments_urls?.length !== attachmentUrlsToSave.length) {
+             console.log(`[Polling] Message ${savedMessage.id} has ${savedMessage.attachments_urls?.length || 0} attachments, but processed ${attachmentUrlsToSave.length}. Updating.`);
             try {
               const { error: updateError } = await supabase
                 .from('messages')

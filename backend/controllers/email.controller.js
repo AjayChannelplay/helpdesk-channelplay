@@ -1085,7 +1085,7 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
 
     // Fetch complete email details including attachments
     const msgResponse = await axios.get(
-      `https://graph.microsoft.com/v1.0/me/messages/${messageId}`,
+      `https://graph.microsoft.com/v1.0/me/messages/${messageId}?$expand=attachments`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -1095,6 +1095,7 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
     );
     
     const email = msgResponse.data;
+    console.log('📬 Full email object from Graph API:', JSON.stringify(email, null, 2)); // Log the entire email object
     console.log(`✓ Email fetched - Subject: "${email.subject}"`);
     console.log(`✓ From: ${email.from?.emailAddress?.address || 'Unknown'}`);
     console.log(`✓ Has attachments: ${email.hasAttachments ? 'Yes' : 'No'}`);
@@ -1147,39 +1148,63 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
       console.error('\n❌ DATABASE ERROR while checking/creating message:', msgDbErr);
     }
     
-    // If no attachments, we're done after creating the message
-    if (!email.hasAttachments) {
-      console.log('\n⚠️ No attachments in this email. Finished processing.');
-      return true;
-    }
-    
-    // STEP 2: PARSE ATTACHMENTS (BASE64)
-    console.log('\n📦 STEP 2: PARSING ATTACHMENTS FROM EMAIL');
-    
-    // Get attachment metadata and content
-    const attachmentsResponse = await axios.get(
-      `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
+    let attachments = [];
+    let attachmentsSource = ''; // For logging
+
+    // STEP 2: DETERMINE ATTACHMENT SOURCE AND PARSE
+    console.log('\n📦 STEP 2: DETERMINING ATTACHMENT SOURCE AND PARSING');
+
+    // Check if attachments were expanded and are available directly in the email object
+    if (email.attachments && email.attachments.length > 0) {
+      attachments = email.attachments;
+      attachmentsSource = 'expanded from message object';
+      console.log(`✓ Attachments found directly in message object (due to $expand). Count: ${attachments.length}`);
+    } else if (email.hasAttachments) {
+      // Fallback: if hasAttachments is true but attachments weren't expanded (or $expand failed/not used),
+      // fetch them separately.
+      console.log('✓ email.hasAttachments is true, but no attachments in expanded response. Fetching separately...');
+      try {
+        const attachmentsResponse = await axios.get(
+          `https://graph.microsoft.com/v1.0/me/messages/${messageId}/attachments`,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        attachments = attachmentsResponse.data.value;
+        attachmentsSource = 'fetched via separate API call';
+        if (attachments && attachments.length > 0) {
+            console.log(`✓ Attachments fetched via separate API call. Count: ${attachments.length}`);
+        } else {
+            console.log('⚠️ Attachments API call returned no attachments, despite hasAttachments being true.');
+            attachments = []; // Ensure attachments is an empty array
         }
+      } catch (error) {
+        console.error('❌ Error fetching attachments separately:', error);
+        attachments = []; // Ensure attachments is an empty array on error
       }
-    );
-    
-    const attachments = attachmentsResponse.data.value;
-    if (!attachments || attachments.length === 0) {
-      console.log('⚠️ No attachments found in response despite hasAttachments flag');
-      return true;
+    } else {
+      console.log('\n⚠️ No attachments indicated by hasAttachments flag or found in expanded response. Assuming no attachments.');
+      // Message record is already created/updated before this block.
+      // s3UploadResults will remain empty, and thus attachments_urls will be empty for the DB update.
     }
-    
-    console.log(`✓ Found ${attachments.length} attachments:`);
+
+    if (!attachments || attachments.length === 0) {
+      console.log(`✓ No processable attachments found from source: '${attachmentsSource || 'N/A'}'. Proceeding without attachment upload.`);
+    } else {
+      console.log(`✓ Processing ${attachments.length} attachments from '${attachmentsSource}':`);
+    }
     attachments.forEach((att, i) => {
-      console.log(`  ${i+1}) ${att.name} (${att.contentType}, ${att.size || 'unknown'} bytes)`);
+      console.log(`  ${i+1}) Name: ${att.name}, Type: ${att.contentType}, Size: ${att.size || 'unknown'} bytes, Inline: ${att.isInline}, ContentId: ${att.contentId}`);
     });
-    
+
     // STEP 3: UPLOAD TO S3 (NO ACL)
-    console.log('\n☁️ STEP 3: UPLOADING ATTACHMENTS TO S3');
+    // This console log should be conditional on attachments actually being processed
+    if (attachments && attachments.length > 0) {
+        console.log('\n☁️ STEP 3: UPLOADING ATTACHMENTS TO S3');
+    }
     
     // Array to store results from S3 uploads
     const s3UploadResults = [];
@@ -1244,11 +1269,13 @@ const processNewIncomingEmail = async (messageId, desk_id) => {
           const attachmentMetadata = {
             name: attachment.name,
             originalName: attachment.name,
-            url: uploadedFile.url,
+            url: uploadedFile.url, // This is the S3 URL
             contentType: attachment.contentType || 'application/octet-stream',
-            size: attachment.size || buffer.length,
+            size: attachment.size || buffer.length, // attachment.size is from Graph, buffer.length is actual decoded size
             s3Key: uploadedFile.s3Key,
-            uploadTimestamp: new Date().toISOString()
+            uploadTimestamp: new Date().toISOString(),
+            contentId: attachment.contentId || null, // Add contentId, defaulting to null if not present
+            isInline: attachment.isInline || false   // Add isInline, defaulting to false if not present
           };
           
           console.log('Attachment metadata prepared:', JSON.stringify(attachmentMetadata));
