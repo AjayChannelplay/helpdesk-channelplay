@@ -297,7 +297,7 @@ exports.replyToEmail = async (req, res) => {
       console.log(`[EmailCtrl] Successfully logged outgoing reply for original email ${emailId} to DB.`);
       console.log(`[EmailCtrl] Message ID in database: ${loggedMessage?.id || 'unknown'}`);
       console.log(`[EmailCtrl] Confirmed has_attachments in DB: ${loggedMessage?.has_attachments || false}`);
-      console.log(`[EmailCtrl] Confirmed attachments_urls length in DB: ${(result?.attachments_urls || []).length}`);
+      console.log(`[EmailCtrl] Confirmed attachments_urls length in DB: ${(loggedMessage?.attachments_urls || []).length}`);
 
     } catch (dbError) {
       console.error(`[EmailCtrl] Failed to log outgoing reply for email ${emailId} to database:`, dbError.message, dbError.stack);
@@ -364,28 +364,131 @@ exports.resolveTicket = async (req, res) => {
     
     const originalMessage = messageResponse.data;
     
-    // Create the email content with emoji feedback options
+    // Create the email content with numerical rating options directly in email
     const resolutionContent = `
-      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px;">
-        <h2 style="color: #4CAF50;">Your ticket has been resolved</h2>
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; max-width: 600px;">
+        <h2 style="color: #444; font-weight: 600;">Your ticket has been resolved</h2>
         <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
-        <p>We'd love to hear about your experience. Please rate our service by clicking one of the options below:</p>
+        <p>We'd love to hear about your experience. How satisfied were you with our service?</p>
         
-        <div style="margin: 30px 0; text-align: center; display: flex; justify-content: center; align-items: center;">
-          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=positive" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
-            <span style="font-size: 32px; display: block;">😃</span>
-            <p style="margin-top: 5px;">Great!</p>
-          </a>
+        <div style="margin: 30px 0; text-align: center;">
+          <p style="font-weight: 500; font-size: 18px; margin-bottom: 20px;">Click on a number to rate your satisfaction level:</p>
           
-          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=neutral" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
-            <span style="font-size: 32px; display: block;">😐</span>
-            <p style="margin-top: 5px;">Okay</p>
-          </a>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 550px; margin: 0 auto;">
+            <tr>
+              <td align="center" style="padding-bottom: 15px;">
+                <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
+                  <tr>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff5a65; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">1</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff7a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">2</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff9a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">3</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ffba7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">4</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #f3b941; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">5</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center">
+                <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
+                  <tr>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #e0c54d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">6</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #c8cf58; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">7</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #a3d063; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">8</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #76ca6d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">9</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                    <td style="padding: 0 7px;">
+                      <table cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #26cb7c; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 16px; line-height: 50px; text-align: center;">10</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
           
-          <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/submit?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=negative" style="text-decoration: none; margin: 0 15px; display: inline-block; width: 100px;">
-            <span style="font-size: 32px; display: block;">😞</span>
-            <p style="margin-top: 5px;">Not satisfied</p>
-          </a>
+          <div style="position: relative; width: 100%; margin: 15px auto 5px;">
+            <div style="display: flex; justify-content: space-between; width: 92%; max-width: 550px; margin: 0 auto;">
+              <span style="color: #666; font-size: 14px; text-align: left;">Very Dissatisfied</span>
+              <span style="color: #666; font-size: 14px; text-align: right;">Very Satisfied</span>
+            </div>
+          </div>
         </div>
         
         <p>If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
@@ -1735,93 +1838,89 @@ exports.fetchUnreadEmails = async (req, res) => {
 // Fetch email conversation for a ticket
 exports.fetchConversation = async (req, res) => {
   try {
-    const ticketId = req.params.ticketId;
-    console.log('Fetching conversation for ticket ID:', ticketId);
-    
-    if (!ticketId) {
-      return res.status(400).json({ message: 'Ticket ID is required' });
+    const identifier = req.params.ticketId; // This can be microsoft_message_id or microsoft_conversation_id
+    console.log('[fetchConversation] Received identifier:', identifier);
+
+    if (!identifier) {
+      return res.status(400).json({ message: 'Identifier (microsoft_message_id or microsoft_conversation_id) is required' });
     }
-    
-    // Get ticket details including desk ID
-    const { data: ticket, error: ticketError } = await supabase
-      .from('tickets')
+
+    let targetConversationId = null;
+
+    // Heuristic: Microsoft Message IDs are often long and start with 'AAMk...'
+    // User's custom conversation IDs might be like 'email-123'
+    // This check might need refinement based on actual ID patterns
+    const isLikelyMicrosoftMessageId = identifier.startsWith('AAMk') || identifier.length > 100; // Adjust length as needed
+
+    if (isLikelyMicrosoftMessageId) {
+      console.log(`[fetchConversation] Identifier '${identifier}' looks like a Microsoft Message ID. Fetching its conversation ID.`);
+      const { data: messageData, error: msgError } = await supabase
+        .from('messages')
+        .select('microsoft_conversation_id')
+        .eq('microsoft_message_id', identifier)
+        .single();
+
+      if (msgError || !messageData) {
+        console.error(`[fetchConversation] Error fetching message by microsoft_message_id '${identifier}':`, msgError?.message || 'Not found');
+        return res.status(404).json({ message: `Message not found for microsoft_message_id: ${identifier}` });
+      }
+      targetConversationId = messageData.microsoft_conversation_id;
+      if (!targetConversationId) {
+        console.error(`[fetchConversation] Message '${identifier}' found, but it has no microsoft_conversation_id.`);
+        return res.status(404).json({ message: `Conversation ID missing for message: ${identifier}` });
+      }
+      console.log(`[fetchConversation] Derived microsoft_conversation_id '${targetConversationId}' from microsoft_message_id '${identifier}'.`);
+    } else {
+      targetConversationId = identifier;
+      console.log(`[fetchConversation] Identifier '${identifier}' assumed to be a direct microsoft_conversation_id.`);
+    }
+
+    // Now fetch all messages for the targetConversationId
+    console.log(`[fetchConversation] Fetching all messages for microsoft_conversation_id: '${targetConversationId}'`);
+    let messagesQuery = supabase
+      .from('messages')
       .select('*')
-      .eq('id', ticketId)
-      .single();
-      
-    console.log('Ticket fetch result:', ticketError ? 'Error' : 'Success');
-    
-    if (ticketError) {
-      console.error('Error fetching ticket:', ticketError.message);
-      return res.status(404).json({ message: `Ticket not found: ${ticketError.message}` });
-    }
-    
-    if (!ticket) {
-      console.error('No ticket found with ID:', ticketId);
-      return res.status(404).json({ message: 'Ticket not found' });
-    }
-    
-    console.log('Ticket found:', ticket.id, ticket.subject);
-    
-    // Get user ID and role from request
+      .eq('microsoft_conversation_id', targetConversationId);
+
+    // Apply role-based filtering
     const userId = req.userId;
     const userRole = req.userRole;
     console.log(`[fetchConversation] User ID: ${userId}, Role: ${userRole}`);
-    
-    // Build base query for ticket messages
-    let query = supabase
-      .from('messages')
-      .select('*')
-      .eq('ticket_id', ticketId);
-    
-    // If the user is not an admin or supervisor, filter by assigned_to_user_id
-    // Admins and supervisors can see all messages
+
     if (userRole !== 'admin' && userRole !== 'supervisor') {
-      console.log(`[fetchConversation] Filtering messages for agent ${userId}`);
-      // Get messages that are either assigned to this user or not assigned yet
-      query = query.or(`assigned_to_user_id.eq.${userId},assigned_to_user_id.is.null`);
+      console.log(`[fetchConversation] Filtering messages for agent ${userId} based on assigned_to_user_id.`);
+      messagesQuery = messagesQuery.or(`assigned_to_user_id.eq.${userId},assigned_to_user_id.is.null`);
     } else {
-      console.log(`[fetchConversation] Admin/supervisor ${userId} can see all messages`);
+      console.log(`[fetchConversation] Admin/supervisor ${userId} can see all messages for this conversation.`);
     }
-    
-    // Complete the query with ordering
-    const { data: messages, error: messagesError } = await query.order('created_at', { ascending: true });
-      
-    console.log('Messages fetch result:', messagesError ? 'Error' : 'Success', 'Count:', messages?.length || 0);
-    
+
+    const { data: messages, error: messagesError } = await messagesQuery.order('created_at', { ascending: true });
+
     if (messagesError) {
-      console.error('Error fetching messages:', messagesError.message);
+      console.error(`[fetchConversation] Error fetching messages for microsoft_conversation_id '${targetConversationId}':`, messagesError.message);
       return res.status(500).json({ message: `Error fetching messages: ${messagesError.message}` });
     }
-    
-    // If no messages are found, create an initial message from the ticket description
-    const conversation = messages.length > 0 ? messages : [
-      {
-        id: 'initial',
-        ticket_id: ticket.id,
-        sender_email: ticket.customer_email,
-        sender_name: ticket.customer_name,
-        content: ticket.description || 'No description provided',
-        created_at: ticket.created_at,
-        is_internal: false
-      }
-    ];
-    
-    // Process messages to include more readable content
-    const processedConversation = conversation.map(message => {
-      return {
-        ...message,
-        fromName: message.sender_name || message.sender_email,
-        type: message.message_type || 'reply',
-      };
 
+    if (!messages || messages.length === 0) {
+      console.log(`[fetchConversation] No messages found for microsoft_conversation_id '${targetConversationId}'.`);
+      // Depending on requirements, could return 404 or empty array. Returning empty for now.
+      return res.status(200).json([]); 
+    }
 
-    });
-    
-    console.log('Returning conversation with', processedConversation.length, 'messages');
+    console.log(`[fetchConversation] Found ${messages.length} messages for microsoft_conversation_id '${targetConversationId}'.`);
+
+    // Process messages (similar to previous, but without ticket-specific initial message)
+    const processedConversation = messages.map(message => ({
+      ...message,
+      fromName: message.from_name || message.from_address, // Updated from sender_name/sender_email to match schema
+      type: message.is_internal ? 'internal_note' : (message.direction === 'outgoing' ? 'reply' : 'customer_message'), // Example type logic
+    }));
+
+    console.log('[fetchConversation] Returning processed conversation with', processedConversation.length, 'messages.');
     return res.status(200).json(processedConversation);
+
   } catch (error) {
-    console.error('Error fetching conversation:', error);
+    console.error('[fetchConversation] Unhandled error:', error);
     return res.status(500).json({ message: error.message || 'Error fetching conversation' });
   }
 };

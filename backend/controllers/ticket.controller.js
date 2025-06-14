@@ -2,6 +2,10 @@ const Ticket = require('../models/ticket.model');
 const Message = require('../models/message.model');
 const Desk = require('../models/desk.model');
 const EmailService = require('../utils/email.service');
+const emailController = require('./email.controller'); // Import email controller for resolveTicket
+const { supabase } = require('../config/db.config'); // Add supabase client import
+const { generateFeedbackEmailHTML } = require('../utils/emailTemplates');
+const { v4: uuidv4 } = require('uuid');
 
 // Create a new ticket
 exports.createTicket = async (req, res) => {
@@ -113,6 +117,9 @@ exports.updateTicket = async (req, res) => {
       return res.status(404).json({ message: 'Ticket not found' });
     }
     
+    // Check if status is changing to closed
+    const statusChangingToClosed = req.body.status === 'closed' && ticket.status !== 'closed';
+    
     // Update ticket
     const updatedTicket = await Ticket.update(req.params.id, {
       subject: req.body.subject || ticket.subject,
@@ -120,17 +127,103 @@ exports.updateTicket = async (req, res) => {
       priority: req.body.priority || ticket.priority,
       status: req.body.status || ticket.status,
       desk_id: req.body.desk_id || ticket.desk_id,
-      assigned_to: req.body.assigned_to || ticket.assigned_to
+      assigned_to_user_id: req.body.assigned_to_user_id || req.body.assigned_to || ticket.assigned_to_user_id
     });
     
     // Create internal note about the update if requested
-    if (req.body.add_internal_note) {
+    if (req.body.add_internal_note || statusChangingToClosed) {
       await Message.create({
         ticket_id: req.params.id,
         sender_id: req.userId,
-        content: `Ticket updated: ${req.body.update_note || 'Status changed to ' + req.body.status}`,
+        content: req.body.update_note || `Ticket status changed to ${req.body.status || ticket.status}`,
         is_internal: true
       });
+    }
+    
+    // Send feedback email if ticket is being closed
+    if (statusChangingToClosed) {
+      try {
+        console.log(`Ticket ${ticket.id} status changed to closed, sending feedback email`);
+        
+        // Get the most recent customer message to send feedback email to
+        const { data: recentMessages, error: messagesError } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('ticket_id', ticket.id)
+          .eq('direction', 'incoming')
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        if (messagesError) {
+          console.error('Error fetching recent messages:', messagesError);
+        } else if (recentMessages && recentMessages.length > 0) {
+          const recentMessage = recentMessages[0];
+          
+          console.log(`Found recent message with ID ${recentMessage.microsoft_message_id || recentMessage.id}`);
+          
+          // Use the emailController directly to send the feedback email with proper threading
+          // This calls the same code path as the frontend "resolve" button
+          const mockReq = {
+            params: {
+              emailId: recentMessage.microsoft_message_id || recentMessage.id
+            },
+            query: {
+              desk_id: ticket.desk_id
+            },
+            body: {}
+          };
+          
+          const mockRes = {
+            status: (code) => ({
+              json: (data) => {
+                console.log(`Feedback email response [${code}]:`, data);
+              }
+            })
+          };
+          
+          // Call the resolveTicket method from emailController
+          await emailController.resolveTicket(mockReq, mockRes);
+          console.log('Feedback email sent using resolveTicket controller');
+        } else {
+          console.log('No recent messages found to send feedback email for ticket', ticket.id);
+          
+          // Fallback to basic email if we have customer contact info
+          if (ticket.from_address) {
+            console.log(`Sending basic feedback email to ${ticket.from_address}`);
+            
+            // Get desk for email settings
+            const desk = await Desk.findById(ticket.desk_id);
+            
+            if (!desk) {
+              console.error(`Cannot send feedback email: Desk ${ticket.desk_id} not found`);
+            } else {
+              // Initialize email service with desk settings
+              const emailService = new EmailService(desk);
+              
+              // Initialize the email service (required before sending)
+              await emailService.init();
+              
+              // Send the feedback email
+              await emailService.sendEmail({
+                to: ticket.from_address,
+                subject: `Your ticket #${ticket.user_ticket_id || ticket.id} has been resolved`,
+                body: `
+                  <p>Hello ${ticket.from_name || ''},</p>
+                  <p>Your support ticket regarding "${ticket.subject}" has been resolved and closed.</p>
+                  <p>We would appreciate your feedback on your support experience.</p>
+                  <p>Thank you for using our helpdesk service!</p>
+                `,
+                isHtml: true
+              });
+              
+              console.log(`Feedback email sent successfully to ${ticket.from_address}`);
+            }
+          }
+        }
+      } catch (emailError) {
+        // Log error but don't fail the request
+        console.error('Error sending feedback email:', emailError);
+      }
     }
     
     res.status(200).json({
@@ -138,6 +231,7 @@ exports.updateTicket = async (req, res) => {
       ticket: updatedTicket
     });
   } catch (error) {
+    console.error('Error in updateTicket:', error);
     res.status(500).json({ 
       message: 'Error updating ticket',
       error: error.message 
@@ -222,6 +316,144 @@ exports.deleteTicket = async (req, res) => {
       message: 'Error deleting ticket',
       error: error.message 
     });
+  }
+};
+
+// Request sending a feedback email for a ticket
+exports.requestTicketFeedback = async (req, res) => {
+  const { ticketId } = req.params;
+  const baseFeedbackUrl = (process.env.APP_BASE_URL || 'http://localhost:3001') + '/api/tickets/feedback/submit'; // Ensure your frontend/API base URL is correct, 3001 for backend typically
+
+  try {
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ message: 'Ticket not found' });
+    }
+
+    if (!ticket.desk_id) {
+        console.error(`Cannot send feedback email: Ticket ${ticketId} has no desk_id.`);
+        return res.status(400).json({ message: 'Ticket is not associated with a desk, cannot determine email settings.' });
+    }
+    
+    const desk = await Desk.findById(ticket.desk_id);
+    if (!desk) {
+        console.error(`Cannot send feedback email: Desk ${ticket.desk_id} not found for ticket ${ticketId}.`);
+        return res.status(404).json({ message: `Desk configuration not found for ticket's desk.` });
+    }
+
+    const feedbackToken = ticket.feedback_token || uuidv4();
+    const ticketIdForLink = ticket.id; // Use the UUID for the link
+    const ticketDisplayIdForText = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+
+    await Ticket.update(ticketId, {
+      feedback_token: feedbackToken,
+      feedback_requested_at: new Date(),
+      feedback_submitted_at: null,
+      feedback_rating: null,
+      feedback_comment: null
+    });
+
+    const customerEmail = ticket.from_address;
+    const customerName = ticket.from_name || 'Valued Customer';
+
+    if (!customerEmail) {
+      console.error(`Cannot send feedback email for ticket ${ticketId}: No customer email (from_address) found.`);
+      return res.status(400).json({ message: 'Customer email not found for this ticket.' });
+    }
+
+    const emailHtmlContent = generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdForText, ticketIdForLink, baseFeedbackUrl);
+    const emailSubject = `Tell us about your recent support experience (Ticket #${ticketDisplayIdForText})`;
+
+    const emailServiceInstance = new EmailService(desk);
+    await emailServiceInstance.init();
+
+    await emailServiceInstance.sendEmail({
+      to: customerEmail,
+      subject: emailSubject,
+      body: emailHtmlContent,
+      ticketId: ticketId
+    });
+
+    console.log(`Feedback email requested successfully for ticket ${ticketId} to ${customerEmail}. Token: ${feedbackToken}`);
+    res.status(200).json({ message: 'Feedback email request processed successfully.' });
+
+  } catch (error) {
+    console.error(`Error in requestTicketFeedback for ticket ${ticketId}:`, error);
+    res.status(500).json({ message: 'Error processing feedback email request.', error: error.message });
+  }
+};
+
+// Submit feedback (handles clicks from email links)
+exports.submitFeedback = async (req, res) => {
+  const { token, rating, ticket_id: ticketIdFromLink } = req.query;
+
+  if (!token || !rating || !ticketIdFromLink) {
+    return res.status(400).send('Missing feedback parameters (token, rating, or ticket_id).');
+  }
+
+  const parsedRating = parseInt(rating, 10);
+  if (isNaN(parsedRating) || parsedRating < 1 || parsedRating > 10) {
+    return res.status(400).send('Invalid rating value. Must be a number between 1 and 10.');
+  }
+
+  try {
+    const { data: tickets, error: findError } = await supabase
+      .from('tickets')
+      .select('*')
+      .eq('feedback_token', token)
+      .eq('id', ticketIdFromLink) // Assuming ticket_id in link is the main UUID ticket.id
+      .limit(1);
+
+    if (findError) {
+      console.error('Error finding ticket by feedback token:', findError);
+      return res.status(500).send('Error processing your feedback. Please try again later.');
+    }
+
+    const ticket = tickets && tickets.length > 0 ? tickets[0] : null;
+
+    if (!ticket) {
+      console.warn(`Feedback submission attempt with invalid token or ticket_id. Token: ${token}, TicketID from link: ${ticketIdFromLink}`);
+      return res.status(404).send('Feedback link is invalid or has expired. Please contact support if you believe this is an error.');
+    }
+
+    if (ticket.feedback_submitted_at) {
+      const displayId = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+      console.log(`Feedback already submitted for ticket ${ticket.id} at ${ticket.feedback_submitted_at}.`);
+      return res.send(
+        `<html><body>
+          <h1>Thank You!</h1>
+          <p>Feedback for ticket #${displayId} has already been submitted on ${new Date(ticket.feedback_submitted_at).toLocaleString()}.</p>
+          <p>If you need further assistance, please contact support.</p>
+        </body></html>`
+      );
+    }
+    
+    const { error: updateError } = await supabase
+      .from('tickets')
+      .update({
+        feedback_rating: parsedRating,
+        feedback_submitted_at: new Date(),
+      })
+      .eq('id', ticket.id);
+
+    if (updateError) {
+      console.error('Error updating ticket with feedback:', updateError);
+      return res.status(500).send('Error saving your feedback. Please try again later.');
+    }
+    const displayId = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+    console.log(`Feedback submitted successfully for ticket ${ticket.id}: Rating ${parsedRating}`);
+    
+    res.send(
+      `<html><body>
+        <h1>Thank You For Your Feedback!</h1>
+        <p>Your rating of ${parsedRating} for ticket #${displayId} has been recorded.</p>
+        <p>We appreciate you taking the time to help us improve our service.</p>
+      </body></html>`
+    );
+
+  } catch (error) {
+    console.error('Error in submitFeedback:', error);
+    res.status(500).send('An unexpected error occurred. Please try again later.');
   }
 };
 

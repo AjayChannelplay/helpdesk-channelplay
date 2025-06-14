@@ -19,9 +19,10 @@ class EmailService {
       }
       
       // Initialize the appropriate email provider
-      if (this.emailIntegration.provider_type === 'MICROSOFT') {
+      const providerType = String(this.emailIntegration.provider_type).toUpperCase();
+      if (providerType === 'MICROSOFT') {
         await this.initMicrosoftClient();
-      } else if (this.emailIntegration.provider_type === 'GMAIL') {
+      } else if (providerType === 'GMAIL') {
         await this.initGmailClient();
       } else {
         throw new Error(`Unsupported provider type: ${this.emailIntegration.provider_type}`);
@@ -143,13 +144,32 @@ class EmailService {
   }
 
   // Send email using the appropriate provider
-  async sendEmail(emailData) {
+  // Can accept either (to, subject, textBody, htmlBody, ticketId, messageId) parameters
+  // or a single emailData object with those properties
+  async sendEmail(toOrEmailData, subject, textBody, htmlBody, ticketId, messageId) {
     try {
       await this.init();
       
-      if (this.emailIntegration.provider_type === 'MICROSOFT') {
+      // Determine if we're using the single object or multiple parameters approach
+      let emailData;
+      if (typeof toOrEmailData === 'object' && toOrEmailData !== null) {
+        // Single object parameter
+        emailData = toOrEmailData;
+      } else {
+        // Multiple parameters
+        emailData = {
+          to: toOrEmailData,
+          subject,
+          body: htmlBody || textBody,
+          ticketId: ticketId || null,
+          messageId: messageId || null
+        };
+      }
+      
+      const providerType = String(this.emailIntegration.provider_type).toUpperCase();
+      if (providerType === 'MICROSOFT') {
         return await this.sendMicrosoftEmail(emailData);
-      } else if (this.emailIntegration.provider_type === 'GMAIL') {
+      } else if (providerType === 'GMAIL') {
         return await this.sendGmailEmail(emailData);
       } else {
         throw new Error(`Unsupported provider type: ${this.emailIntegration.provider_type}`);
@@ -164,6 +184,18 @@ class EmailService {
   async sendMicrosoftEmail(emailData) {
     try {
       const { to, subject, body, ticketId, messageId } = emailData;
+      
+      if (!to) {
+        throw new Error('Recipient email address is required');
+      }
+      
+      if (!subject) {
+        throw new Error('Email subject is required');
+      }
+      
+      if (!body) {
+        throw new Error('Email body content is required');
+      }
       
       // Format the email
       const email = {
@@ -180,19 +212,25 @@ class EmailService {
               }
             }
           ],
-          internetMessageHeaders: [
-            {
-              name: 'X-Ticket-ID',
-              value: ticketId.toString()
-            },
-            {
-              name: 'X-Message-ID',
-              value: messageId.toString()
-            }
-          ]
+          internetMessageHeaders: []
         },
         saveToSentItems: 'true'
       };
+      
+      // Add optional headers only if values are provided
+      if (ticketId) {
+        email.message.internetMessageHeaders.push({
+          name: 'X-Ticket-ID',
+          value: String(ticketId)
+        });
+      }
+      
+      if (messageId) {
+        email.message.internetMessageHeaders.push({
+          name: 'X-Message-ID',
+          value: String(messageId)
+        });
+      }
       
       // Send the email using Microsoft Graph API
       const response = await axios.post(
@@ -260,9 +298,10 @@ class EmailService {
     try {
       await this.init();
       
-      if (this.emailIntegration.provider_type === 'MICROSOFT') {
+      const providerType = String(this.emailIntegration.provider_type).toUpperCase();
+      if (providerType === 'MICROSOFT') {
         return await this.fetchMicrosoftEmails();
-      } else if (this.emailIntegration.provider_type === 'GMAIL') {
+      } else if (providerType === 'GMAIL') {
         return await this.fetchGmailEmails();
       } else {
         throw new Error(`Unsupported provider type: ${this.emailIntegration.provider_type}`);

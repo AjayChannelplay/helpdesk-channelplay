@@ -3,6 +3,33 @@ const { assignUserRoundRobin } = require('../utils/direct_assignment.utils');
 
 const Message = {
   /**
+   * Create a simple message (mainly for internal notes and ticket updates)
+   * This is a simplified wrapper around logMessage to maintain consistency with other models
+   */
+  create: async (messageData) => {
+    try {
+      console.log('[MessageModel] Creating new message via create method:', messageData);
+      
+      // Format data to match logMessage requirements
+      const formattedData = {
+        desk_id: messageData.desk_id,
+        ticket_id: messageData.ticket_id,
+        body_html: messageData.content,
+        body_text: messageData.content,
+        body_preview: messageData.content?.substring(0, 100),
+        sender_id: messageData.sender_id,
+        is_internal: messageData.is_internal || false,
+        direction: messageData.is_internal ? 'internal' : 'outgoing'
+      };
+      
+      // Use logMessage to actually create the message
+      return await Message.logMessage(formattedData);
+    } catch (error) {
+      console.error('[MessageModel] Error creating message:', error);
+      throw error;
+    }
+  },
+  /**
    * Logs an email message (incoming or outgoing) to the database.
    * This method is intended to be the primary way to save email messages.
    * It will also associate the message with a ticket if a ticket_id is provided.

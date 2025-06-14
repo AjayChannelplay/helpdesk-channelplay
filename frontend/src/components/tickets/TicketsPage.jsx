@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { supabase } from '../../utils/supabaseClient';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
   Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip
@@ -16,6 +17,8 @@ import TicketService from '../../services/ticket.service';
 import AuthService from '../../services/auth.service';
 import API from '../../services/api.service';
 import { API_URL } from "../../constants";
+import { toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 import './TicketsPage.css';
 
@@ -101,6 +104,27 @@ const TicketsPage = () => {
   const [showCcField, setShowCcField] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const fileInputRef = useRef(null);
+  const selectedTicketRef = useRef(selectedTicket);
+  const conversationRef = useRef(conversation);
+  const showAllEmailsRef = useRef(showAllEmails);
+  const [generalMessagesChannel, setGeneralMessagesChannel] = useState(null);
+  const activeTicketChannelRef = useRef(null);
+
+  // Derive ticketId and conversationId from selectedTicket for use in effects and other logic
+  const ticketId = selectedTicket?.id;
+  const conversationId = selectedTicket?.conversation_id;
+
+  useEffect(() => {
+    selectedTicketRef.current = selectedTicket;
+  }, [selectedTicket]);
+
+  useEffect(() => {
+    conversationRef.current = conversation;
+  }, [conversation]);
+
+  useEffect(() => {
+    showAllEmailsRef.current = showAllEmails;
+  }, [showAllEmails]);
   const [userInfo, setUserInfo] = useState(null);
   const [processedEmailHtml, setProcessedEmailHtml] = useState('');
 
@@ -121,7 +145,7 @@ const TicketsPage = () => {
   const processHtmlWithInlineAttachments = async (htmlContent, message, deskIdOverride) => {
     // Allow override of selectedDeskId for when called from other components
     const deskId = deskIdOverride || selectedDeskId;
-    console.log('[InlineProc] DIAGNOSIS - Full message object received:', JSON.stringify(message, null, 2));
+
     console.log('[InlineProc] DIAGNOSIS - message.attachments_urls:', JSON.stringify(message.attachments_urls, null, 2));
     console.log('[InlineProc] DIAGNOSIS - message.attachments (Graph API):', JSON.stringify(message.attachments, null, 2));
 
@@ -362,6 +386,31 @@ const TicketsPage = () => {
     });
   };
   
+  // Helper function for consistent date formatting across the component
+  const formatDisplayDate = (dateValue) => {
+    if (!dateValue) return 'Unknown time';
+    try {
+      // Try to create a valid date object
+      const date = new Date(dateValue);
+      if (isNaN(date.getTime())) return 'Unknown time';
+      
+      // Format based on whether it's today or another day
+      const now = new Date();
+      const isToday = date.getDate() === now.getDate() && 
+                      date.getMonth() === now.getMonth() && 
+                      date.getFullYear() === now.getFullYear();
+      
+      if (isToday) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } else {
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      }
+    } catch (e) {
+      console.warn('Error formatting date:', dateValue, e);
+      return 'Unknown time';
+    }
+  };
+
   // Get user info from auth service on component mount only
   useEffect(() => {
     try {
@@ -434,10 +483,11 @@ const TicketsPage = () => {
   };
 
   // Effect to handle desk fetching - runs only when userInfo changes
+  // Effect to handle desk fetching - runs only when userInfo changes
   useEffect(() => {
     if (!userInfo) return;
     
-    console.log('[TicketsPage] Desk fetching useEffect - userInfo.id:', userInfo.id);
+    console.log('[TicketsPage] Desk fetching useEffect - userInfo.id:', userInfo?.id);
     
     const fetchDesks = async () => {
       try {
@@ -554,56 +604,37 @@ const TicketsPage = () => {
     
     const loadInitialData = async () => {
       try {
-        // Fetch tickets and emails in parallel
+        // Fetch open tickets and closed tickets in parallel
         const promises = [];
         
-        // Fetch tickets
+        // Fetch open tickets
         promises.push(
-          TicketService.getTickets(selectedDeskId)
+          TicketService.getTicketsByStatus(selectedDeskId, 'open')
             .then(data => {
               if (!isMounted) return;
-              if (Array.isArray(data)) setTickets(data);
-              console.log('Initial tickets loaded:', data?.length || 0);
+              if (Array.isArray(data)) {
+                setTickets(data);
+                console.log('Initial open tickets loaded:', data?.length || 0);
+              }
             })
-            .catch(err => console.error('Error loading initial tickets:', err))
+            .catch(err => console.error('Error loading initial open tickets:', err))
         );
-        
-        // Fetch emails based on view preference
-        if (showAllEmails) {
-          promises.push(
-            EmailService.fetchEmails(selectedDeskId, 'open')
-              .then(data => {
-                if (!isMounted) return;
-                if (Array.isArray(data)) {
-                  setAllEmails(data);
-                  setUnreadEmails(data.filter(email => !email.isRead));
-                }
-                console.log('Initial all emails loaded:', data?.length || 0);
-              })
-              .catch(err => console.error('Error loading initial all emails:', err))
-          );
-        } else {
-          promises.push(
-            EmailService.fetchUnreadEmails(selectedDeskId)
-              .then(data => {
-                if (!isMounted) return;
-                if (Array.isArray(data)) setUnreadEmails(data);
-                console.log('Initial unread emails loaded:', data?.length || 0);
-              })
-              .catch(err => console.error('Error loading initial unread emails:', err))
-          );
-        }
-        
-        // Fetch closed emails
+
+        // Fetch closed tickets
         promises.push(
-          EmailService.fetchEmails(selectedDeskId, 'closed')
+          TicketService.getTicketsByStatus(selectedDeskId, 'closed')
             .then(data => {
               if (!isMounted) return;
-              if (Array.isArray(data)) setResolvedEmails(data);
-              console.log('Initial closed emails loaded:', data?.length || 0);
+              if (Array.isArray(data)) {
+                setResolvedEmails(data); // Using resolvedEmails state for closed tickets
+                console.log('Initial closed tickets loaded:', data?.length || 0);
+              }
             })
-            .catch(err => console.error('Error loading initial closed emails:', err))
+            .catch(err => console.error('Error loading initial closed tickets:', err))
         );
+
+        // We'll fetch unread tickets later once we have Supabase integration for message count tracking
+        // For now, we'll assume all tickets with recent messages are "unread"
         
         // Wait for all requests to complete
         await Promise.all(promises);
@@ -628,32 +659,41 @@ const TicketsPage = () => {
   }, [selectedDeskId, showAllEmails]);
 
   // Fetch tickets
-  const fetchTickets = async () => {
+  const fetchTickets = useCallback(async () => {
     if (!selectedDeskId) return;
     
     try {
       setLoading(true);
-      const ticketsData = await TicketService.getTickets(selectedDeskId);
-      console.log('Tickets data:', ticketsData);
-      // Only update tickets if we received valid data
-      if (Array.isArray(ticketsData)) {
-        setTickets(ticketsData);
-      } else {
-        console.warn('Invalid tickets data received:', ticketsData);
-        // Keep previous state
+      // Fetch open tickets by default
+      const openTickets = await TicketService.getTicketsByStatus(selectedDeskId, 'open');
+      
+      if (Array.isArray(openTickets)) {
+        setTickets(openTickets);
+        console.log('Refreshed open tickets:', openTickets.length);
       }
+      
+      // Fetch closed tickets if needed (based on current view)
+      if (emailStatusFilter === 'closed') {
+        const closedTickets = await TicketService.getTicketsByStatus(selectedDeskId, 'closed');
+        if (Array.isArray(closedTickets)) {
+          setResolvedEmails(closedTickets);
+          console.log('Refreshed closed tickets:', closedTickets.length);
+        }
+      }
+      
       setLoading(false);
     } catch (err) {
       console.error('Error fetching tickets:', err);
       setLoading(false);
       // Keep previous tickets state on error
     }
-  };
+  }, [selectedDeskId, emailStatusFilter]);
 
   // Fetch unread emails based on desk ID
   const fetchUnreadEmails = async () => {
     if (!selectedDeskId) return;
     
+// ...
     try {
       setLoading(true);
       const unreadData = await EmailService.fetchUnreadEmails(selectedDeskId);
@@ -703,13 +743,14 @@ const TicketsPage = () => {
     if (!selectedDeskId) return;
     
     try {
-      const closedEmailsData = await EmailService.fetchEmails(selectedDeskId, 'closed');
-      console.log('Closed emails data:', closedEmailsData);
+      // Use TicketService to get closed tickets instead of emails
+      const closedTicketsData = await TicketService.getTicketsByStatus(selectedDeskId, 'closed');
+      console.log('Closed tickets data:', closedTicketsData);
       // Only update if we got valid data
-      if (Array.isArray(closedEmailsData)) {
-        setResolvedEmails(closedEmailsData);
+      if (Array.isArray(closedTicketsData)) {
+        setResolvedEmails(closedTicketsData);
       } else {
-        console.warn('Invalid closed emails data received:', closedEmailsData);
+        console.warn('Invalid closed tickets data received:', closedTicketsData);
         // Keep previous state
       }
     } catch (err) {
@@ -730,58 +771,42 @@ const TicketsPage = () => {
     
     const refreshAllData = async () => {
       try {
-        // Fetch tickets and emails in parallel for better performance
+        // Fetch open and closed tickets in parallel, similar to initial load
         const promises = [];
         
-        // Fetch tickets
+        // Fetch open tickets
         promises.push(
-          TicketService.getTickets(selectedDeskId)
+          TicketService.getTicketsByStatus(selectedDeskId, 'open')
             .then(data => {
               if (!isMounted) return;
-              if (Array.isArray(data)) setTickets(data);
-              console.log('Tickets refreshed:', data?.length || 0);
+              if (Array.isArray(data)) {
+                setTickets(data); // This state holds open tickets
+                console.log('Refreshed open tickets:', data?.length || 0);
+              }
             })
-            .catch(err => console.error('Error refreshing tickets:', err))
+            .catch(err => console.error('Error refreshing open tickets:', err))
         );
-        
-        // Fetch emails based on view preference
-        if (showAllEmails) {
-          promises.push(
-            EmailService.fetchEmails(selectedDeskId, 'open')
-              .then(data => {
-                if (!isMounted) return;
-                if (Array.isArray(data)) {
-                  setAllEmails(data);
-                  setUnreadEmails(data.filter(email => !email.isRead));
-                }
-                console.log('All emails refreshed:', data?.length || 0);
-              })
-              .catch(err => console.error('Error refreshing all emails:', err))
-          );
-        } else {
-          promises.push(
-            EmailService.fetchUnreadEmails(selectedDeskId)
-              .then(data => {
-                if (!isMounted) return;
-                if (Array.isArray(data)) setUnreadEmails(data);
-                console.log('Unread emails refreshed:', data?.length || 0);
-              })
-              .catch(err => console.error('Error refreshing unread emails:', err))
-          );
-        }
-        
-        // Fetch closed emails
+
+        // Fetch closed tickets
         promises.push(
-          EmailService.fetchEmails(selectedDeskId, 'closed')
+          TicketService.getTicketsByStatus(selectedDeskId, 'closed')
             .then(data => {
               if (!isMounted) return;
-              if (Array.isArray(data)) setResolvedEmails(data);
-              console.log('Closed emails refreshed:', data?.length || 0);
+              if (Array.isArray(data)) {
+                setResolvedEmails(data); // This state holds closed tickets
+                console.log('Refreshed closed tickets:', data?.length || 0);
+              }
             })
-            .catch(err => console.error('Error refreshing closed emails:', err))
+            .catch(err => console.error('Error refreshing closed tickets:', err))
         );
         
-        // Wait for all requests to complete
+        // Optionally, if you still need to refresh pure email lists (not tickets)
+        // you can add those EmailService calls here. For now, focusing on ticket consistency.
+        // Example: 
+        // if (showAllEmails) { ... EmailService.fetchEmails ... }
+        // else { ... EmailService.fetchUnreadEmails ... }
+
+        // Wait for all ticket-related requests to complete
         await Promise.all(promises);
         
         if (isMounted) {
@@ -807,47 +832,628 @@ const TicketsPage = () => {
     };
   }, [selectedDeskId, showAllEmails]);
 
-  // Auto-refresh functionality for tickets and emails
-  useEffect(() => {
-    if (!autoRefreshEnabled || !selectedDeskId) return;
+  // Handlers for Supabase Realtime events (moved up to fix initialization errors)
+  const handleNewReply = useCallback((newReplyMessage) => {
+    console.log('[Supabase Realtime] handleNewReply: Processing new message for current conversation:', newReplyMessage);
     
-    console.log(`[TicketsPage] Setting up auto-refresh interval: ${refreshInterval} seconds`);
+    // Format the message to match the expected UI format
+    const formattedMessage = {
+      ...newReplyMessage,
+      // Transform body_html into the nested body.content format that UI expects
+      body: {
+        contentType: 'HTML',
+        content: newReplyMessage.body_html || newReplyMessage.body_preview || ''
+      },
+      // Ensure bodyPreview is available at the top level as the UI expects
+      bodyPreview: newReplyMessage.body_preview,
+      // Ensure fromName is set
+      fromName: newReplyMessage.from_name || 'Unknown',
+      // Format timestamps for UI
+      sentDateTime: newReplyMessage.sent_at,
+      receivedDateTime: newReplyMessage.received_at || newReplyMessage.created_at
+    };
     
-    // Initial load when component mounts or selectedDeskId changes is now done separately
-    // to avoid race conditions. Don't call handleRefresh() here as it might lead to state inconsistencies.
+    const conversationId = newReplyMessage.microsoft_conversation_id;
+    if (!conversationId) {
+      console.warn('[Supabase Realtime] handleNewReply: Missing conversation ID, cannot update ticket lists', newReplyMessage);
+    }
     
-    // Set up interval for auto-refresh
-    const intervalId = setInterval(() => {
-      console.log('[TicketsPage] Auto-refresh triggered');
-      // Instead of handleRefresh(), call individual fetch functions to better handle errors
-      fetchTickets().catch(err => {
-        console.error('[Auto-refresh] Error refreshing tickets:', err);
-        // Don't update loading state or error state for auto-refresh errors
-      });
+    // First update the displayed conversation
+    setConversation(prevConversation => {
+      if (!prevConversation) prevConversation = [];
       
-      // Fetch emails based on current view
-      if (showAllEmails) {
-        fetchAllEmails().catch(err => {
-          console.error('[Auto-refresh] Error refreshing all emails:', err);
+      const exists = prevConversation.some(msg => 
+        msg.id === formattedMessage.id || 
+        (formattedMessage.temp_id && msg.id === formattedMessage.temp_id)
+      );
+      
+      if (!exists) {
+        console.log('[Supabase Realtime] handleNewReply: Adding new message to current conversation UI.');
+        const updatedConversation = [...prevConversation, formattedMessage].sort((a, b) => {
+          // First try to use created_at as it's the most reliable server-side timestamp
+          const dateA = a.created_at ? new Date(a.created_at) : 
+                      new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
+          const dateB = b.created_at ? new Date(b.created_at) : 
+                      new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
+          
+          // If dates are very close (within 1 second), use message ID as secondary sort
+          const timeDiff = Math.abs(dateA - dateB);
+          if (timeDiff < 1000 && a.id && b.id) {
+            return a.id.localeCompare(b.id);
+          }
+          return dateA - dateB;
         });
-      } else {
-        fetchUnreadEmails().catch(err => {
-          console.error('[Auto-refresh] Error refreshing unread emails:', err);
-        });
+        return updatedConversation;
       }
       
-      // Fetch closed emails too
-      fetchClosedEmails().catch(err => {
-        console.error('[Auto-refresh] Error refreshing closed emails:', err);
-      });
-    }, refreshInterval * 1000);
+      console.log('[Supabase Realtime] handleNewReply: Message already exists in conversation UI.');
+      return prevConversation;
+    });
+
+    // Also update the selectedTicket.messages array if this message belongs to the current ticket
+    const currentSelectedTicket = selectedTicketRef.current;
     
-    // Clean up interval on component unmount
-    return () => {
-      console.log('[TicketsPage] Cleaning up auto-refresh interval');
-      clearInterval(intervalId);
+    if (currentSelectedTicket && (
+      (formattedMessage.ticket_id && formattedMessage.ticket_id === currentSelectedTicket.id) || 
+      (formattedMessage.microsoft_conversation_id && formattedMessage.microsoft_conversation_id === currentSelectedTicket.id) ||
+      (currentSelectedTicket.conversationId && formattedMessage.microsoft_conversation_id && 
+        formattedMessage.microsoft_conversation_id === currentSelectedTicket.conversationId) ||
+      (currentSelectedTicket.microsoft_conversation_id && 
+        formattedMessage.microsoft_conversation_id && 
+        formattedMessage.microsoft_conversation_id === currentSelectedTicket.microsoft_conversation_id)
+    )) {
+      setSelectedTicket(prevTicket => {
+        if (!prevTicket) return null;
+        
+        const messages = prevTicket.messages || [];
+        const existsInTicketMessages = messages.some(msg => msg.id === formattedMessage.id);
+        if (!existsInTicketMessages) {
+          console.log('[Supabase Realtime] handleNewReply: Updating selectedTicket.messages.');
+          const updatedMessages = [...messages, formattedMessage].sort((a, b) => {
+              // First try to use created_at as it's the most reliable server-side timestamp
+              const dateA = a.created_at ? new Date(a.created_at) : 
+                          new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
+              const dateB = b.created_at ? new Date(b.created_at) : 
+                          new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
+              
+              // If dates are very close (within 1 second), use message ID as secondary sort
+              const timeDiff = Math.abs(dateA - dateB);
+              if (timeDiff < 1000 && a.id && b.id) {
+                return a.id.localeCompare(b.id);
+              }
+              return dateA - dateB;
+          });
+          return {
+            ...prevTicket,
+            messages: updatedMessages,
+          };
+        }
+        return prevTicket;
+      });
+      
+      // Here's the key fix: Also update the message cache in the main ticket/email lists
+      // This ensures the conversation persists when switching between tickets
+      if (conversationId) {
+        // Update the messages in any matching tickets in the main ticket list
+        setTickets(prevTickets => updateTicketsListWithNewMessage(prevTickets, conversationId, formattedMessage));
+        
+        // Also update allEmails list so switching tabs preserves conversation
+        setAllEmails(prevEmails => updateTicketsListWithNewMessage(prevEmails, conversationId, formattedMessage));
+        
+        // Update unreadEmails if needed
+        if (formattedMessage.direction === 'incoming') {
+          setUnreadEmails(prevUnread => updateTicketsListWithNewMessage(prevUnread, conversationId, formattedMessage));
+        }
+      }
+    }
+  }, [setConversation, setSelectedTicket, setTickets, setAllEmails, setUnreadEmails]);
+  
+  // Helper function to update any ticket list with new messages
+  const updateTicketsListWithNewMessage = (ticketList, conversationId, newMessage) => {
+    if (!ticketList || !Array.isArray(ticketList)) return ticketList;
+    
+    return ticketList.map(ticket => {
+      // Match ticket by id or conversationId
+      if (ticket.id === conversationId || ticket.conversationId === conversationId) {
+        const messages = ticket.messages || [];
+        
+        // Check if message already exists
+        const messageExists = messages.some(msg => msg.id === newMessage.id);
+        if (!messageExists) {
+          console.log(`[Supabase Realtime] Updating cached messages for ticket/conversation: ${conversationId}`);
+          
+          // Sort messages by date with improved chronological ordering
+          const updatedMessages = [...messages, newMessage].sort((a, b) => {
+            // First try to use created_at as it's the most reliable server-side timestamp
+            const dateA = a.created_at ? new Date(a.created_at) : 
+                        new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
+            const dateB = b.created_at ? new Date(b.created_at) : 
+                        new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
+            
+            // If dates are very close (within 1 second), use message ID as secondary sort
+            const timeDiff = Math.abs(dateA - dateB);
+            if (timeDiff < 1000 && a.id && b.id) {
+              return a.id.localeCompare(b.id);
+            }
+            return dateA - dateB;
+          });
+          
+          // Update ticket with new messages and move it to the top if needed
+          return {
+            ...ticket,
+            messages: updatedMessages,
+            bodyPreview: newMessage.bodyPreview || ticket.bodyPreview,
+            last_message_at: newMessage.sentDateTime || newMessage.receivedDateTime || new Date().toISOString()
+          };
+        }
+      }
+      return ticket;
+    });
+  };
+
+  const handleNewTicket = useCallback((newTicketPayload) => {
+    // newTicketPayload is the raw data from Supabase for an insert on the 'tickets' table
+    console.log('[DEBUG] handleNewTicket CALLED. Raw newTicket payload:', JSON.stringify(newTicketPayload, null, 2));
+    
+    // Basic validation: ensure this is for the 'tickets' table and has a proper ticket ID
+    if (!newTicketPayload.id || typeof newTicketPayload.id !== 'string' || newTicketPayload.id.startsWith('email-')) {
+        console.warn('[Supabase Realtime] handleNewTicket received payload without a valid ticket ID or invalid format. Ignoring:', newTicketPayload);
+        return; 
+    }
+
+    // Immediately add a placeholder ticket with loading state
+    const initialTicketData = {
+      id: newTicketPayload.id,
+      subject: newTicketPayload.subject || 'No Subject',
+      status: newTicketPayload.status || 'new',
+      created_at: newTicketPayload.created_at || new Date().toISOString(),
+      last_message_at: newTicketPayload.last_message_at || newTicketPayload.created_at || new Date().toISOString(),
+      conversation_id: newTicketPayload.conversation_id,
+      from_name: newTicketPayload.from_name || 'Loading...',
+      from_address: newTicketPayload.from_address,
+      isLoading: true // Mark as loading until we fetch complete data
     };
-  }, [selectedDeskId, autoRefreshEnabled, refreshInterval, showAllEmails, fetchTickets, fetchAllEmails, fetchUnreadEmails, fetchClosedEmails]);
+    
+    console.log('[Supabase Realtime] Adding placeholder for new ticket:', initialTicketData.id);
+    
+    // Add placeholder to ticket list
+    setTickets(prevTickets => {
+      if (prevTickets.some(t => t.id === initialTicketData.id)) return prevTickets;
+      return [initialTicketData, ...prevTickets];
+    });
+    
+    // Fetch complete ticket details including first message for preview
+    const fetchCompleteTicketDetails = async () => {
+      try {
+        console.log(`[Supabase Realtime] Fetching complete details for ticket ${newTicketPayload.id}`);
+        // Get full ticket data
+        const ticketDetails = await TicketService.getTicketById(newTicketPayload.id);
+        
+        if (!ticketDetails) {
+          console.error(`[Supabase Realtime] Failed to fetch details for ticket ${newTicketPayload.id}`);
+          return;
+        }
+        
+        console.log('[Supabase Realtime] Got complete ticket details:', ticketDetails);
+        
+        // Now get the first/latest message for this ticket to show as preview
+        let preview = '';
+        let firstMessage = null;
+        
+        try {
+          // Attempt to get messages for this ticket
+          const messages = await TicketService.getTicketMessages(newTicketPayload.id, newTicketPayload.conversation_id);
+          if (messages && messages.length > 0) {
+            firstMessage = messages[0]; // Assuming messages are sorted with newest first
+            preview = firstMessage.body_preview || firstMessage.body_text || '';
+            console.log('[Supabase Realtime] Got first message preview:', preview.substring(0, 50) + '...');
+          }
+        } catch (msgErr) {
+          console.warn('[Supabase Realtime] Error fetching messages for preview:', msgErr);
+          // Continue anyway - we'll just show the ticket without message preview
+        }
+        
+        // Construct complete ticket object with all available data
+        const completeTicket = {
+          ...ticketDetails,
+          preview: preview,
+          description: firstMessage?.body_text || ticketDetails.description || '',
+          from_name: ticketDetails.from_name || newTicketPayload.from_name || 'Unknown',
+          customer_name: ticketDetails.customer_name || ticketDetails.from_name,
+          customer_email: ticketDetails.from_address || ticketDetails.customer_email,
+          isLoading: false, // No longer loading
+          hasCompleteData: true // Flag to indicate we have complete data
+        };
+        
+        // Update ticket in state with complete data
+        setTickets(prevTickets => {
+          const updatedTickets = prevTickets.map(t => 
+            t.id === completeTicket.id ? completeTicket : t
+          );
+          return updatedTickets.sort((a, b) => new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at));
+        });
+      } catch (error) {
+        console.error(`[Supabase Realtime] Error fetching complete details for ticket ${newTicketPayload.id}:`, error);
+      }
+    };
+    
+    // Execute the fetch asynchronously
+    fetchCompleteTicketDetails();
+
+    // If you have separate 'unread' counts or lists that are not just filtered views of 'tickets',
+    // you might need additional logic here. For now, focusing on correcting the main 'tickets' list.
+    // Example: if a new ticket from an email source should also appear in an 'unread emails' type of view
+    // if (ticketToAdd.isEmail && ticketToAdd.status === 'new') {
+    //   setUnreadEmails(prev => [ticketToAdd, ...prev.filter(t => t.id !== ticketToAdd.id)]);
+    // }
+
+  }, [setTickets]);
+  
+  const handleUpdatedTicket = useCallback(async (updatedTicket, oldTicket) => {
+    console.log('[DEBUG] handleUpdatedTicket CALLED. Raw updatedTicket payload:', JSON.stringify(updatedTicket, null, 2), 'Raw oldTicket payload:', JSON.stringify(oldTicket, null, 2));
+    console.log('[Supabase Realtime] Ticket updated:', { old: oldTicket, new: updatedTicket });
+    const conversationId = updatedTicket.conversation_id;
+  
+    if (updatedTicket.status === 'closed' && oldTicket.status !== 'closed') {
+      console.log('[Supabase Realtime] Ticket status changed to closed:', conversationId);
+  
+      setAllEmails(prev => prev.filter(t => t.id !== conversationId));
+      setUnreadEmails(prev => prev.filter(t => t.id !== conversationId));
+  
+      const deskId = updatedTicket.desk_id || selectedDeskId;
+      if (deskId) {
+          EmailService.fetchEmails(deskId, 'closed')
+            .then(closedEmailsData => {
+              const closedConversation = closedEmailsData.find(conv => conv.id === conversationId);
+              if (closedConversation) {
+                  setResolvedEmails(prev => [closedConversation, ...prev.filter(t => t.id !== conversationId)]);
+              } else {
+                  console.warn(`Closed conversation ${conversationId} not found in fetch results.`);
+                  const fallbackTicket = { ...updatedTicket, id: conversationId, conversationId: conversationId, messages: [] };
+                  setResolvedEmails(prev => [fallbackTicket, ...prev.filter(t => t.id !== conversationId)]);
+              }
+            })
+            .catch(error => {
+              console.error('Error fetching closed emails:', error);
+            });
+      }
+    } else {
+       const updateList = (list) => {
+          return list.map(ticket => {
+              if (ticket.id === conversationId) {
+                  return {
+                      ...ticket,
+                      subject: updatedTicket.subject,
+                      is_read: !updatedTicket.has_unread,
+                  };
+              }
+              return ticket;
+          });
+      };
+      setAllEmails(updateList);
+      if (updatedTicket.has_unread) {
+        setUnreadEmails(prev => {
+            const existing = prev.find(t => t.id === conversationId);
+            if (existing) {
+                return updateList(prev);
+            } else {
+                const updated = allEmails.find(t => t.id === conversationId);
+                return updated ? [updated, ...prev] : prev;
+            }
+        });
+      } else {
+        setUnreadEmails(prev => prev.filter(t => t.id !== conversationId));
+      }
+    }
+  }, [selectedDeskId, allEmails, setAllEmails, setUnreadEmails, setResolvedEmails]);
+  
+  const handleNewMessage = useCallback((newMessage) => {
+    console.log('[Supabase Realtime] New message received:', newMessage);
+    const conversationId = newMessage.microsoft_conversation_id;
+  
+    if (!conversationId) {
+        console.warn('[Supabase Realtime] New message without a conversation ID, cannot process.', newMessage);
+        return;
+    }
+  
+    const updateList = (list) => {
+        const ticketIndex = list.findIndex(t => t.id === conversationId);
+        if (ticketIndex === -1) return list;
+  
+        const updatedTicket = {
+            ...list[ticketIndex],
+            bodyPreview: newMessage.body_preview || '',
+            last_message_at: newMessage.created_at,
+            is_read: newMessage.direction === 'outgoing',
+            direction: newMessage.direction,
+        };
+  
+        const newList = [...list];
+        newList.splice(ticketIndex, 1);
+        newList.unshift(updatedTicket);
+        return newList;
+    };
+  
+    setAllEmails(updateList);
+    if (newMessage.direction === 'incoming') {
+        setUnreadEmails(updateList);
+    }
+  
+    if (selectedTicketRef.current && selectedTicketRef.current.id === conversationId) {
+        handleNewReply(newMessage);
+    }
+  }, [setAllEmails, setUnreadEmails, handleNewReply]);
+
+  const handleUpdatedMessageInConversation = useCallback((updatedMessage) => {
+    setConversation(prev => {
+      if (!prev) return null;
+      // Find and replace the updated message in the conversation list
+      return prev.map(msg => msg.id === updatedMessage.id ? updatedMessage : msg);
+    });
+  }, []); // setConversation is stable and doesn't need to be in deps array
+
+  // Refs for stable handlers
+  const handleNewTicketRef = useRef(handleNewTicket);
+  const handleUpdatedTicketRef = useRef(handleUpdatedTicket);
+  const handleNewMessageRef = useRef(handleNewMessage);
+  const handleNewReplyRef = useRef(handleNewReply);
+  const handleUpdatedMessageInConversationRef = useRef(handleUpdatedMessageInConversation);
+
+  useEffect(() => {
+    handleNewTicketRef.current = handleNewTicket;
+  }, [handleNewTicket]);
+
+  useEffect(() => {
+    handleUpdatedTicketRef.current = handleUpdatedTicket;
+  }, [handleUpdatedTicket]);
+
+  useEffect(() => {
+    handleNewMessageRef.current = handleNewMessage;
+  }, [handleNewMessage]);
+
+  useEffect(() => {
+    handleNewReplyRef.current = handleNewReply;
+  }, [handleNewReply]);
+
+  useEffect(() => {
+    handleUpdatedMessageInConversationRef.current = handleUpdatedMessageInConversation;
+  }, [handleUpdatedMessageInConversation]);
+
+  // Setup the general messages channel
+  useEffect(() => {
+    if (!selectedDeskId || !supabase) {
+      // If there's an active general messages channel, remove it as we no longer have a selectedDeskId
+      if (generalMessagesChannel) {
+        console.log(`[Supabase Realtime] No selectedDeskId, cleaning up existing desk channel: ${generalMessagesChannel.topic}`);
+        supabase.removeChannel(generalMessagesChannel);
+        setGeneralMessagesChannel(null);
+      }
+      return;
+    }
+
+    const channelName = `desk_changes_${selectedDeskId.replace(/-/g, '_')}`;
+    
+    // If a channel for a *different* desk exists, or if the current channel is not joined, clean it up.
+    if (generalMessagesChannel) {
+      if (generalMessagesChannel.topic !== channelName || generalMessagesChannel.state !== 'joined') {
+        console.log(`[Supabase Realtime] Cleaning up old/stale desk channel: ${generalMessagesChannel.topic}`);
+        supabase.removeChannel(generalMessagesChannel);
+        setGeneralMessagesChannel(null); // Ensure we attempt to create a new one
+      } else {
+        // Channel for current deskId already exists and is joined, do nothing
+        console.log(`[Supabase Realtime] Desk channel ${channelName} already exists and is joined.`);
+        return;
+      }
+    }
+    
+    console.log(`[Supabase Realtime] Setting up new desk channel: ${channelName}`);
+    const newDeskChannel = supabase
+      .channel(channelName)
+      // Listen for new tickets created in this desk
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `desk_id=eq.${selectedDeskId}` }, payload => {
+        console.log('[Supabase Realtime] Received new ticket:', payload);
+        if (payload.new) handleNewTicketRef.current(payload.new);
+      })
+      // Listen for ticket status updates or other changes
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `desk_id=eq.${selectedDeskId}` }, payload => {
+        console.log('[Supabase Realtime] Received ticket update:', payload);
+        if (payload.new && payload.old) handleUpdatedTicketRef.current(payload.new, payload.old);
+      })
+      // For compatibility, still listen to message inserts at desk level
+      // This is secondary; primary message handling is via ticket-specific channel when a ticket is selected.
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `desk_id=eq.${selectedDeskId}` }, payload => {
+        console.log('[Supabase Realtime] Received new message at desk level:', payload);
+        if (payload.new) {
+          const newMessage = payload.new;
+          handleNewMessageRef.current(newMessage); // General handler for new messages on the desk
+          
+          // If this message belongs to the *currently selected ticket*, also update its conversation view.
+          // Check selectedTicketRef.current as selectedTicket state might be stale in this callback scope.
+          if (selectedTicketRef.current && 
+              ((newMessage.ticket_id && newMessage.ticket_id === selectedTicketRef.current.id) ||
+               (newMessage.microsoft_conversation_id && newMessage.microsoft_conversation_id === selectedTicketRef.current.conversation_id))) {
+            handleNewReplyRef.current(newMessage);
+          }
+        }
+      })
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`[Supabase Realtime] Successfully subscribed to desk channel: ${channelName}`);
+          setGeneralMessagesChannel(newDeskChannel);
+        }
+        if (status === 'CHANNEL_ERROR') {
+          console.error(`[Supabase Realtime] Channel error on ${channelName}:`, err);
+          // If the channel we tried to subscribe to is still the one in state, nullify it to allow re-attempt
+          if(generalMessagesChannel && generalMessagesChannel.topic === channelName) {
+            setGeneralMessagesChannel(null);
+          }
+        }
+      }); // End of .subscribe()
+
+    // Cleanup function for the desk-level channel
+    return () => {
+      console.log(`[Supabase Realtime] Cleaning up desk channel: ${newDeskChannel.topic} due to unmount or selectedDeskId change.`);
+      supabase.removeChannel(newDeskChannel);
+      if (generalMessagesChannel && generalMessagesChannel.topic === newDeskChannel.topic) {
+        setGeneralMessagesChannel(null);
+      }
+    };
+  }, [selectedDeskId, supabase, handleNewTicketRef, handleUpdatedTicketRef, handleNewMessageRef, handleNewReplyRef, selectedTicketRef]); // End of desk-level useEffect
+
+  // Define commonMessageHandler with useCallback to ensure it's stable
+  const commonMessageHandler = useCallback((payload, eventType) => {
+    try {
+      // console.log(`[Supabase Realtime] Ticket-Specific ${eventType} for ${payload.new.ticket_id ? 'ticket' : 'conversation'}:`, payload);
+      if (payload && payload.new) {
+        if (eventType === 'INSERT') {
+          handleNewReplyRef.current(payload.new);
+        } else if (eventType === 'UPDATE') {
+          // Ensure you have a handler for updated messages in the conversation
+          if (handleUpdatedMessageInConversationRef.current) {
+            handleUpdatedMessageInConversationRef.current(payload.new);
+          } else {
+            // Fallback if no specific update handler exists
+            handleNewReplyRef.current(payload.new);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[Supabase Realtime] Error handling ticket-specific ${eventType} message:`, error);
+    }
+  }, [handleNewReplyRef, handleUpdatedMessageInConversationRef]);
+
+  // Ref to prevent multiple concurrent initialization attempts
+  const ticketInitInProgressRef = useRef(false);
+  // Throttled ticket ID to prevent rapid switching
+  const [delayedTicketId, setDelayedTicketId] = useState(ticketId);
+
+  // Throttle ticket switching to prevent channel setup flood
+  useEffect(() => {
+    const id = setTimeout(() => setDelayedTicketId(ticketId), 300);
+    return () => clearTimeout(id);
+  }, [ticketId]);
+
+  // Supabase Realtime subscription for ticket-specific messages
+  useEffect(() => {
+    // Use the async IIFE pattern to allow await inside useEffect
+    const setupTicketChannel = async () => {
+      // Guard condition: No ticket, no client
+      if (!delayedTicketId || !supabase) {
+        // If there's an existing channel, remove it as we no longer have a ticketId or supabase client
+        if (activeTicketChannelRef.current) {
+          console.log(`[Supabase Realtime] No ticketId/supabase, cleaning up existing ticket channel: ${activeTicketChannelRef.current.topic}`);
+          await supabase?.removeChannel(activeTicketChannelRef.current); // Use optional chaining and await
+          activeTicketChannelRef.current = null;
+        }
+        return;
+      }
+
+      // Guard against concurrent setup attempts
+      if (ticketInitInProgressRef.current) {
+        console.log(`[Supabase Realtime] Setup already in progress for another ticket, skipping.`);
+        return;
+      }
+      
+      try {
+        ticketInitInProgressRef.current = true; // Set lock
+
+        // Use a consistent, collision-resistant naming scheme (raw UUID is preferred if available)
+        const channelName = `ticket_channel_${delayedTicketId}`;
+
+        // 1. Clean up previous channel if it exists and is for a different ticketId
+        if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic !== channelName) {
+          console.log(`[Supabase Realtime] Ticket ID changed. Cleaning up old channel: ${activeTicketChannelRef.current.topic}`);
+          await supabase.removeChannel(activeTicketChannelRef.current); // Added await
+          activeTicketChannelRef.current = null;
+        }
+
+        // 2. If a channel for the current ticket already exists and is joined/joining, do nothing further.
+        if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic === channelName && 
+            (activeTicketChannelRef.current.state === 'joined' || activeTicketChannelRef.current.state === 'joining')) {
+          console.log(`[Supabase Realtime] Channel ${channelName} already exists and is ${activeTicketChannelRef.current.state}.`);
+          return;
+        }
+
+        // 3. If a channel for this topic exists but was in a bad state (e.g., timed_out, errored, closed), ensure it's removed before creating a new one.
+        if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic === channelName) {
+            console.log(`[Supabase Realtime] Stale channel ${channelName} found (state: ${activeTicketChannelRef.current.state}), removing to re-establish.`);
+            await supabase.removeChannel(activeTicketChannelRef.current); // Added await
+            activeTicketChannelRef.current = null;
+        }
+        
+        console.log(`[Supabase Realtime] Setting up new ticket-specific channel: ${channelName} for ticket ID: ${delayedTicketId}`);
+        const newTicketChannel = supabase.channel(channelName);
+
+        // Attach listeners using the memoized commonMessageHandler
+        newTicketChannel.on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'messages', filter: `ticket_id=eq.${delayedTicketId}` },
+          (payload) => commonMessageHandler(payload, 'INSERT')
+        );
+        newTicketChannel.on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'messages', filter: `ticket_id=eq.${delayedTicketId}` },
+          (payload) => commonMessageHandler(payload, 'UPDATE')
+        );
+        
+        // If there's a conversation ID (for legacy email tickets), also listen to messages linked to that conversation ID
+        if (conversationId) {
+          console.log(`[Supabase Realtime] Also setting up listeners for microsoft_conversation_id=${conversationId} on channel ${channelName}`);
+          newTicketChannel.on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'messages', filter: `microsoft_conversation_id=eq.${conversationId}` },
+            (payload) => commonMessageHandler(payload, 'INSERT')
+          );
+          newTicketChannel.on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'messages', filter: `microsoft_conversation_id=eq.${conversationId}` },
+            (payload) => commonMessageHandler(payload, 'UPDATE')
+          );
+        }
+        
+        newTicketChannel
+          .on('error', (error) => {
+            console.error(`[Supabase Realtime] Ticket channel ${channelName} error:`, error);
+          })
+          .on('closed', () => {
+            console.warn(`[Supabase Realtime] Ticket channel ${channelName} was closed.`);
+          })
+          .subscribe(status => {
+            console.log(`[Supabase Realtime] Ticket channel (${channelName}) subscription status: ${status}`);
+            if (status === 'SUBSCRIBED') {
+              console.log(`[Supabase Realtime] Successfully subscribed to ${channelName}`);
+              activeTicketChannelRef.current = newTicketChannel; // Assign the new channel to the ref on successful subscription
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                console.error(`[Supabase Realtime] Subscription to ${channelName} failed with status: ${status}`);
+                // If this specific channel instance failed, nullify the ref to allow re-subscription attempt if deps change.
+                // Check if the current ref is indeed pointing to the channel that failed.
+                if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic === newTicketChannel.topic) {
+                  activeTicketChannelRef.current = null; 
+                }
+            }
+          });
+      } catch (error) {
+        console.error('[Supabase Realtime] Error setting up ticket channel:', error);
+      } finally {
+        // Always release the lock, even if there was an error
+        ticketInitInProgressRef.current = false;
+      }
+    };
+
+    // Start the async setup process
+    setupTicketChannel();
+
+    // Return cleanup function for this effect run
+    return () => {
+      if (activeTicketChannelRef.current) {
+        console.log(`[Supabase Realtime] Cleaning up ticket channel: ${activeTicketChannelRef.current.topic} (unmount or deps change)`);
+        // We don't await here since this is running during cleanup
+        supabase.removeChannel(activeTicketChannelRef.current);
+        // Ensure the ref is cleared if it was pointing to the channel being removed by this cleanup
+        activeTicketChannelRef.current = null;
+      }
+    };
+  }, [supabase, delayedTicketId, conversationId, commonMessageHandler]); // Using delayedTicketId instead of ticketId
 
   // Create a fetchConversationData function that can be called both initially and for auto-refresh
   // Use a ref to track if we've just sent a reply and need to force refresh
@@ -859,7 +1465,11 @@ const TicketsPage = () => {
       console.log('Refreshing email conversation after reply, email ID:', emailId);
       
       // First, try to get any new conversation data from the server
-      const response = await API.get(`/emails/${emailId}?desk_id=${encodeURIComponent(deskId)}`);
+      console.log(`[refreshEmailConversation] Fetching conversation for ID: ${emailId}, Desk ID: ${deskId}`);
+      // Ensure 'emailId' here is treated as a conversation_id for this endpoint.
+      // The backend route is /api/emails/conversation/:ticketId
+      // The desk_id query param is not strictly used by the current backend fetchConversation but sending it for consistency.
+      const response = await API.get(`/emails/conversation/${emailId}?desk_id=${encodeURIComponent(deskId)}`);
       
       if (response.data && response.data.messages) {
         console.log('Got fresh email data with messages:', response.data.messages.length);
@@ -876,128 +1486,110 @@ const TicketsPage = () => {
     }
   }, []);
 
-  const fetchConversationData = useCallback(async (ticket, forceRefresh = false, newReplyContent = null) => {
+  const fetchConversationData = useCallback(async (ticket) => {
     if (!ticket) return;
-    
+
+    // Helper function to sort messages consistently across the app
+    const sortMessages = (messages) => {
+      if (!Array.isArray(messages)) return [];
+      return [...messages].sort((a, b) => {
+        // First try to use created_at as it's the most reliable server-side timestamp
+        const dateA = a.created_at ? new Date(a.created_at) : 
+                    new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
+        const dateB = b.created_at ? new Date(b.created_at) : 
+                    new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
+        
+        // If dates are very close (within 1 second), use message ID as secondary sort
+        const timeDiff = Math.abs(dateA - dateB);
+        if (timeDiff < 1000 && a.id && b.id) {
+          return a.id.localeCompare(b.id);
+        }
+        return dateA - dateB;
+      });
+    };
+
+    const formatMessages = (messages) => {
+      if (!Array.isArray(messages)) return [];
+      // First format all messages
+      const formattedMsgs = messages.map(msg => ({
+        ...msg,
+        body: { contentType: 'HTML', content: msg.body_html || msg.body_preview || msg.body?.content || '' },
+        bodyPreview: msg.body_preview || (msg.body?.content ? msg.body.content.substring(0, 150) : ''),
+        fromName: msg.from_name || msg.from?.emailAddress?.name || 'Unknown',
+        sentDateTime: msg.sent_at || msg.sentDateTime,
+        receivedDateTime: msg.received_at || msg.created_at || msg.receivedDateTime,
+        // Ensure we have isAgent and isCustomer flags for rendering
+        isAgent: msg.direction === 'outgoing' || msg.is_agent,
+        isCustomer: msg.direction === 'incoming' || msg.is_customer
+      }));
+      // Then sort them using our consistent sorting function
+      return sortMessages(formattedMsgs);
+    };
+
     try {
       setLoading(true);
-      setError(null); // Clear any previous errors
+      setError(null);
       console.log('Fetching conversation data for ticket:', ticket.id);
-      
-      // For email conversations without forced refresh
-      if (ticket.id && ticket.id.toString().startsWith('email-') && ticket.messages && !forceRefresh) {
-        console.log('Using existing conversation messages:', ticket.messages.length);
-        setConversation(ticket.messages);
-      }
-      // Either a regular ticket or we need to force refresh for an email
-      else {
-        const ticketId = ticket.id;
-        console.log(`Fetching ${forceRefresh ? 'fresh' : 'regular'} conversation for ticket ID:`, ticketId);
+
+      // If the ticket object already contains messages, format and display them immediately
+      if (ticket.messages && ticket.messages.length > 0) {
+        console.log('Using existing messages from ticket object.');
+        setConversation(formatMessages(ticket.messages));
+      } else {
+        let messages = [];
         
-        // Special handling for email tickets that need fresh data after a reply
-        if (forceRefresh && ticket.id.toString().startsWith('email-')) {
-          const messageToReplyTo = getLatestCustomerMessage(conversation);
-          const emailId = messageToReplyTo.microsoft_message_id || messageToReplyTo.id;
-          console.log('Forcing refresh for email conversation:', emailId);
-          
-          // Try to get fresh email data
-          const freshMessages = await refreshEmailConversation(emailId, selectedDeskId, newReplyContent);
-          
-          if (freshMessages) {
-            // We got fresh message data from server - use it
-            console.log('Using fresh message data from server');
-            setConversation(freshMessages);
-            
-            // Also update the ticket.messages so future views are up to date
-            if (selectedTicket && selectedTicket.id === ticket.id) {
-              setSelectedTicket({
-                ...selectedTicket,
-                messages: freshMessages
-              });
-            }
-            
-            setLoading(false);
-            return; // Exit early since we've handled everything
-          }
-          
-          // If we couldn't get fresh data, we'll add our reply to the existing messages
-          if (newReplyContent && ticket.messages) {
-            console.log('Adding synthetic reply to conversation');
-            
-            // Clone the messages array
-            const updatedMessages = [...ticket.messages];
-            
-            // Add our reply as a new message
-            const newReply = {
-              id: `temp-${Date.now()}`,
-              subject: ticket.subject || 'Re: ' + (ticket.subject || ''),
-              bodyPreview: newReplyContent,
-              body: { content: newReplyContent },
-              from: { emailAddress: { name: userInfo?.name || 'Support Agent', address: userInfo?.email || '' } },
-              sentDateTime: new Date().toISOString(),
-              // Add other fields as needed
-              isFromCurrentUser: true
-            };
-            
-            updatedMessages.push(newReply);
-            
-            // Update the conversation and selected ticket
-            setConversation(updatedMessages);
-            
-            // Also update the selected ticket to include our new message
-            if (selectedTicket && selectedTicket.id === ticket.id) {
-              setSelectedTicket({
-                ...selectedTicket,
-                messages: updatedMessages
-              });
-            }
-            
-            setLoading(false);
-            return; // Exit early
-          }
-        }
-        
-        // Standard path for regular tickets or if other approaches fail
-        const conversationData = await EmailService.fetchConversation(ticketId);
-        console.log('Conversation data received:', conversationData);
-        
-        // Ensure we have an array of conversation messages
-        if (conversationData) {
-          const messageArray = Array.isArray(conversationData) ? conversationData : 
-                            (conversationData.data ? conversationData.data : []);
-          
-          // Process messages to handle complex objects
-          const processedMessages = messageArray.map(message => {
-            // Handle complex from object from Microsoft Graph API
-            if (message.from && typeof message.from === 'object' && message.from.emailAddress) {
-              return {
-                ...message,
-                fromName: message.from.emailAddress.name || message.from.emailAddress.address
-              };
-            }
-            return message;
-          });
-          
-          setConversation(processedMessages);
+        // Different behavior based on ticket type
+        if (ticket.isEmail && (ticket.conversationId || ticket.emailId)) {
+          // Legacy path for email-type tickets from the old system
+          console.log(`Fetching email conversation for legacy ticket:`, ticket.id);
+          const conversationData = await EmailService.fetchConversation(ticket.id);
+          const messageArray = conversationData?.data || (Array.isArray(conversationData) ? conversationData : []);
+          messages = messageArray;
         } else {
-          setConversation([]);
+          // Ticket-centric model: retrieve messages by ticket_id or conversation_id
+          if (ticket.conversation_id) {
+            // Fetch by Microsoft conversation ID if available
+            console.log(`Fetching messages by conversation_id: ${ticket.conversation_id}`);
+            messages = await TicketService.getTicketMessages(null, ticket.conversation_id);
+          } else {
+            // Fetch by ticket ID
+            console.log(`Fetching messages by ticket_id: ${ticket.id}`);
+            messages = await TicketService.getTicketMessages(ticket.id);
+          }
+          console.log(`Retrieved ${messages.length} messages for ticket`);
+          
+          // If no messages found, create a placeholder using ticket data
+          if (!Array.isArray(messages) || messages.length === 0) {
+            if (ticket.subject) {
+              messages = [{
+                id: `ticket-${ticket.id}`,
+                body_html: ticket.description || `<p>Ticket opened: ${ticket.subject}</p>`,
+                body_preview: ticket.subject,
+                from_name: ticket.customer_name || ticket.customer_email || 'Customer',
+                created_at: ticket.created_at,
+                is_customer: true,
+                direction: 'incoming'
+              }];
+            }
+          }
         }
+        
+        setConversation(formatMessages(messages));
       }
-      
+
+    } catch (error) {
+      console.error('Error loading conversation:', error);
+      setError('Failed to load conversation. ' + (error.response?.data?.message || 'Please try again.'));
+    } finally {
       setLoading(false);
-      
       // Scroll to bottom of conversation automatically
       setTimeout(() => {
         if (messagesEndRef.current) {
           messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
       }, 300);
-    } catch (error) {
-      console.error('Error loading conversation:', error);
-      setError('Failed to load conversation. ' + (error.response?.data?.message || 'Please try again.'));
-      setLoading(false);
     }
-  }, []);
+  }, [selectedDeskId]);
 
   // Cleanup function for blob URLs when component unmounts
   useEffect(() => {
@@ -1039,23 +1631,13 @@ const TicketsPage = () => {
   useEffect(() => {
     fetchConversationData(selectedTicket);
   }, [selectedTicket, fetchConversationData]);
+  
 
-  // Auto-refresh for conversation
-  useEffect(() => {
-    if (!autoRefreshEnabled || !selectedTicket) return;
-    
-    console.log(`[TicketsPage] Setting up conversation auto-refresh: ${refreshInterval} seconds`);
-    
-    const intervalId = setInterval(() => {
-      console.log('[TicketsPage] Auto-refreshing conversation');
-      fetchConversationData(selectedTicket);
-    }, refreshInterval * 1000);
-    
-    return () => {
-      console.log('[TicketsPage] Cleaning up conversation auto-refresh');
-      clearInterval(intervalId);
-    };
-  }, [selectedTicket, autoRefreshEnabled, refreshInterval, fetchConversationData]);
+  
+
+
+  // The conversation is now updated via the ticket-specific Supabase Realtime subscription.
+  // The polling-based auto-refresh has been removed.
 
   // Handle sending a reply to a ticket or email
   const handleSendReply = async () => {
@@ -1108,17 +1690,14 @@ const TicketsPage = () => {
       setAttachments([]);
       
       // Refresh the conversation to show the new reply.
-      fetchConversationData(selectedTicket, true);
+      // fetchConversationData(selectedTicket, true); // Temporarily commented out for Realtime test
 
       // Also mark the message as read if it's a direct email.
       if (selectedTicket.id.toString().startsWith('email-')) {
         await EmailService.markAsRead(emailId, selectedDeskId);
-        // Refresh the email list.
-        if (showAllEmails) {
-          await fetchAllEmails();
-        } else {
-          await fetchUnreadEmails();
-        }
+        // The email lists will be updated by the general desk-level Supabase Realtime subscription.
+        // Manually fetching here would cause a disruptive refresh and interfere with the smooth
+        // real-time update of the conversation.
       }
     } catch (err) {
       console.error('Error sending reply:', err);
@@ -1240,15 +1819,90 @@ const TicketsPage = () => {
   // Update ticket status
   const updateTicketStatus = async (ticketId, status) => {
     try {
-      await TicketService.updateTicket(ticketId, { status });
+      console.log(`Updating ticket ${ticketId} to status: ${status}`);
+      const response = await TicketService.updateTicket(ticketId, { status });
+      console.log('Update ticket response:', response);
       
       // Update the selected ticket if it's the one being modified
       if (selectedTicket && selectedTicket.id === ticketId) {
         setSelectedTicket({ ...selectedTicket, status });
       }
       
-      // Refresh tickets list
-      fetchTickets();
+      // If a ticket is being closed, ensure we refresh both open and closed ticket lists
+      if (status === 'closed') {
+        console.log('Ticket was closed, attempting to refresh lists and send feedback email.');
+
+        // Optimistically update UI for responsiveness
+        setTickets(prevTickets => prevTickets.filter(ticket => ticket.id !== ticketId));
+        const ticketToMove = selectedTicket && selectedTicket.id === ticketId ? selectedTicket : tickets.find(t => t.id === ticketId);
+        if (ticketToMove) {
+            const updatedClosedTicket = { ...ticketToMove, status: 'closed' };
+            setResolvedEmails(prevResolved => {
+                if (prevResolved.some(rt => rt.id === updatedClosedTicket.id)) return prevResolved;
+                return [updatedClosedTicket, ...prevResolved].sort((a, b) => new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at));
+            });
+        }
+
+        try {
+          // Fetch updated lists from the server
+          const openTicketsPromise = TicketService.getTicketsByStatus(selectedDeskId, 'open');
+          const closedTicketsPromise = TicketService.getTicketsByStatus(selectedDeskId, 'closed');
+          const [openTickets, closedTickets] = await Promise.all([openTicketsPromise, closedTicketsPromise]);
+
+          if (Array.isArray(openTickets)) {
+            setTickets(openTickets);
+            console.log('Refreshed open tickets after closure:', openTickets.length);
+          }
+          if (Array.isArray(closedTickets)) {
+            setResolvedEmails(closedTickets);
+            console.log('Refreshed closed tickets after closure:', closedTickets.length);
+          }
+
+          // If the current view was showing the ticket that just got closed, select another one or clear selection
+          if (emailStatusFilter === 'open' && selectedTicket && selectedTicket.id === ticketId) {
+            if (openTickets.length > 0) {
+              setSelectedTicket(openTickets[0]);
+              navigate(`/tickets/${openTickets[0].id}`);
+            } else {
+              setSelectedTicket(null);
+              navigate('/tickets'); // Navigate to base tickets page if no open tickets left
+            }
+          } else if (emailStatusFilter === 'closed' && selectedTicket && selectedTicket.id === ticketId) {
+            // If in closed view and the selected ticket was the one closed, ensure it's still selected (it should be in closedTickets now)
+            const stillSelected = closedTickets.find(ct => ct.id === ticketId);
+            if (stillSelected) setSelectedTicket(stillSelected);
+            // No navigation needed, already in closed view
+          }
+
+          // Now, attempt to send the feedback email
+          try {
+            console.log(`Attempting to send feedback email for ticket ${ticketId}...`);
+            await TicketService.requestTicketFeedback(ticketId);
+            console.log(`Feedback email request sent for ticket ${ticketId}.`);
+            toast.info('Feedback email request sent.');
+          } catch (feedbackError) {
+            console.error(`Error sending feedback email for ticket ${ticketId}:`, feedbackError);
+            toast.error('Failed to send feedback email request.'); // More specific error
+          }
+
+        } catch (fetchError) {
+          console.error('Error refreshing ticket lists after closure:', fetchError);
+          toast.error('Error refreshing ticket lists.');
+        }
+      } else {
+        // For other status changes (e.g., open, pending), just refresh the open tickets list
+        // and potentially other relevant lists depending on your status flows.
+        try {
+            const openTickets = await TicketService.getTicketsByStatus(selectedDeskId, 'open');
+            if (Array.isArray(openTickets)) {
+                setTickets(openTickets);
+            }
+            // If you have other status categories like 'pending', fetch them too if needed.
+        } catch (fetchError) {
+            console.error('Error refreshing tickets after status update:', fetchError);
+            toast.error('Error refreshing ticket list.');
+        }
+      }
     } catch (err) {
       console.error('Error updating ticket status:', err);
       setError('Failed to update ticket status. ' + (err.response?.data?.message || 'Please try again.'));
@@ -1293,6 +1947,12 @@ const TicketsPage = () => {
                     console.log('Email status filter changed to:', e.target.value);
                     console.log('Current resolved emails count:', resolvedEmails.length);
                     setEmailStatusFilter(e.target.value);
+                    
+                    // Fetch closed tickets when switching to closed tab
+                    if (e.target.value === 'closed') {
+                      console.log('Fetching closed emails for closed tab...');
+                      fetchClosedEmails();
+                    }
                   }}
                   className="mx-2"
                   style={{ width: 'auto' }}
@@ -1351,13 +2011,8 @@ const TicketsPage = () => {
                                   subject: email.subject,
                                   from: email.fromName || (email.from?.emailAddress?.name || email.from?.emailAddress?.address),
                                   preview: email.preview,
-                                  created: new Date(email.receivedDateTime).toLocaleDateString(),
-                                  time: (() => {
-                                    const dateObj = new Date(email.receivedDateTime);
-                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
-                                      ? new Date().toLocaleTimeString()
-                                      : dateObj.toLocaleTimeString();
-                                  })(),
+                                  created: formatDisplayDate(email.receivedDateTime),
+                                  time: formatDisplayDate(email.receivedDateTime),
                                   isEmail: true,
                                   emailId: email.id
                                 };
@@ -1374,15 +2029,7 @@ const TicketsPage = () => {
                             >
                               <div className="ticket-header">
                                 <div className="ticket-subject">{email.subject}</div>
-                                <small className="ticket-time">{
-                                  (() => {
-                                    const dateObj = new Date(email.receivedDateTime);
-                                    // Check if hours, minutes, seconds are all zero
-                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
-                                      ? new Date().toLocaleTimeString() 
-                                      : dateObj.toLocaleTimeString();
-                                  })()
-                                }</small>
+                                <small className="ticket-time">{formatDisplayDate(email.receivedDateTime || email.created_at || email.last_message_at)}</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{email.fromName || email.from}</small>
@@ -1396,8 +2043,8 @@ const TicketsPage = () => {
                         </div>
                       )}
                       
-                      {/* All Emails Section (grouped by conversation) */}
-                      {showAllEmails && (emailStatusFilter === 'open' ? allEmails.length > 0 : resolvedEmails.length > 0) && (
+                      {/* All Emails Section (grouped by conversation) - Only show in open view */}
+                      {showAllEmails && emailStatusFilter === 'open' && allEmails.length > 0 && (
                         <div className="ticket-section">
                           <div className="ticket-section-header">
                             <small>
@@ -1421,13 +2068,8 @@ const TicketsPage = () => {
                                   subject: conversation.subject,
                                   from: conversation.fromName,
                                   preview: conversation.preview,
-                                  created: new Date(conversation.receivedDateTime).toLocaleDateString(),
-                                  time: (() => {
-                                    const dateObj = new Date(conversation.receivedDateTime);
-                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0)
-                                      ? new Date().toLocaleTimeString()
-                                      : dateObj.toLocaleTimeString();
-                                  })(),
+                                  created: formatDisplayDate(conversation.receivedDateTime || conversation.last_message_at),
+                                  time: formatDisplayDate(conversation.receivedDateTime || conversation.last_message_at),
                                   isEmail: true,
                                   emailId: conversation.latestMessageId,
                                   conversationId: conversation.id,
@@ -1466,15 +2108,7 @@ const TicketsPage = () => {
                                     <Badge bg="secondary" className="ms-2" pill>{conversation.messageCount}</Badge>
                                   )}
                                 </div>
-                                <small className="ticket-time">{
-                                  (() => {
-                                    const dateObj = new Date(conversation.receivedDateTime);
-                                    // Check if hours, minutes, seconds are all zero
-                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
-                                      ? new Date().toLocaleTimeString() 
-                                      : dateObj.toLocaleTimeString();
-                                  })()
-                                }</small>
+                                <small className="ticket-time">{formatDisplayDate(conversation.receivedDateTime || conversation.last_message_at)}</small>
                               </div>
                               <div className="ticket-info">
                                 <small className="ticket-customer">{conversation.fromName}</small>
@@ -1489,72 +2123,89 @@ const TicketsPage = () => {
                       )}
                       
                       {/* Tickets Section */}
-                      {tickets.length > 0 && (
-                        <div className="ticket-section">
-                          <div className="ticket-section-header">
-                            <small><FaTicketAlt className="me-1" /> Tickets ({tickets.length})</small>
-                          </div>
-                          {tickets.map(ticket => (
-                            <div 
-                              key={ticket.id} 
-                              className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
-                              onClick={() => {
-                                // For regular tickets, mark as read if status is 'new'
-                                if (ticket.status === 'new') {
-                                  TicketService.updateTicket(ticket.id, { status: 'open' })
-                                    .then(() => {
-                                      console.log(`Updated ticket ${ticket.id} status from new to open`);
-                                      // Update the local tickets array to reflect the status change
-                                      setTickets(prev => prev.map(t => {
-                                        if (t.id === ticket.id) {
-                                          return {...t, status: 'open'};
-                                        }
-                                        return t;
-                                      }));
-                                    })
-                                    .catch(err => console.error('Error updating ticket status:', err));
-                                }
-                                setSelectedTicket(ticket);
-                              }}
-                            >
-                              <div className="ticket-header">
-                                <div className="ticket-subject">{ticket.subject}</div>
-                                <small className="ticket-time">{
-                                  (() => {
-                                    const dateObj = new Date(ticket.created_at);
-                                    // Check if hours, minutes, seconds are all zero
-                                    return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
-                                      ? new Date().toLocaleTimeString() 
-                                      : dateObj.toLocaleTimeString();
-                                  })()
-                                }</small>
-                              </div>
-                              <div className="ticket-info">
-                                <small className="ticket-customer">{ticket.customer_email || ticket.email}</small>
-                                <div>
-                                  <Badge 
-                                    bg={ticket.status === 'new' ? 'info' : 
-                                       ticket.status === 'open' ? 'success' : 
-                                       ticket.status === 'closed' ? 'secondary' : 'warning'} 
-                                    pill
-                                    className="me-1"
-                                  >
-                                    {ticket.status}
-                                  </Badge>
-                                  {ticket.reopened_from_closed && (
-                                    <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
-                                      Reopened
+                      {(() => {
+                        const isClosedView = emailStatusFilter === 'closed';
+                        // When in closed view, show all tickets from resolvedEmails array
+                        // The backend API already filters by status='closed'
+                        const closedTickets = resolvedEmails;
+                        // For open view, ensure we're only showing non-closed tickets
+                        const openTickets = tickets.filter(ticket => ticket.status !== 'closed');
+
+                        const ticketsToDisplay = isClosedView ? closedTickets : openTickets;
+                        const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets";
+
+                        // Only render the section if there are tickets to display for the current filter
+                        if (ticketsToDisplay.length === 0) {
+                          return null; 
+                        }
+
+                        return (
+                          <div className="ticket-section">
+                            <div className="ticket-section-header">
+                              <small><FaTicketAlt className="me-1" /> {sectionTitle} ({ticketsToDisplay.length})</small>
+                            </div>
+                            {ticketsToDisplay.map(ticket => (
+                              <div 
+                                key={ticket.id} 
+                                className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
+                                onClick={() => {
+                                  // Only attempt to update status if it's not the closed view and ticket is 'new'
+                                  if (!isClosedView && ticket.status === 'new') {
+                                    TicketService.updateTicket(ticket.id, { status: 'open' })
+                                      .then(() => {
+                                        console.log(`Updated ticket ${ticket.id} status from new to open`);
+                                        // Update the local 'tickets' (open tickets) array to reflect the status change
+                                        setTickets(prevOpenTickets => prevOpenTickets.map(t => 
+                                          t.id === ticket.id ? { ...t, status: 'open' } : t
+                                        ));
+                                      })
+                                      .catch(err => console.error('Error updating ticket status:', err));
+                                  }
+                                  setSelectedTicket(ticket);
+                                }}
+                              >
+                                <div className="ticket-header">
+                                  <div className="ticket-subject">{ticket.subject || 'No Subject'}</div>
+                                  <small className="ticket-time">{
+                                    (() => {
+                                      const dateStr = ticket.last_message_at || ticket.updated_at || ticket.created_at;
+                                      if (!dateStr) return '';
+                                      const dateObj = new Date(dateStr);
+                                      // Format time e.g., 03:45 PM
+                                      return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); 
+                                    })()
+                                  }</small>
+                                </div>
+                                <div className="ticket-info">
+                                  <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
+                                  <div>
+                                    <Badge 
+                                      bg={ticket.status === 'new' ? 'info' : 
+                                         ticket.status === 'open' ? 'success' : 
+                                         ticket.status === 'closed' ? 'secondary' : 
+                                         ticket.status === 'pending' ? 'warning' : 'light'} 
+                                      pill
+                                      className="me-1"
+                                    >
+                                      {ticket.status}
                                     </Badge>
-                                  )}
+                                    {ticket.reopened_from_closed && (
+                                      <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
+                                        Reopened
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="ticket-message">
+                                  {/* Ensure preview is a string and truncate if necessary */}
+                                  <small>{String(ticket.preview || ticket.description || ticket.subject || 'No preview available').substring(0, 100)}</small>
                                 </div>
                               </div>
-                              <div className="ticket-message">
-                                <small>{ticket.description?.substring(0, 60)}...</small>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                            ))}
+                          </div>
+                        );
+                      })()}
+                      {/* End of Tickets Section */}
                     </>
                   )}
                 </div>
