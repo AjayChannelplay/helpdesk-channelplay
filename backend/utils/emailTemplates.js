@@ -9,11 +9,25 @@
  * @returns {string} The HTML string for the email.
  */
 function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdForText, ticketIdForLink, baseFeedbackUrl) {
+  // Define color gradient from red to green
+  const colorGradient = [
+    '#FF0000', // Dark red
+    '#FF3333', // Red
+    '#FF6666', // Light red
+    '#FF9966', // Red-orange
+    '#FFCC66', // Orange
+    '#FFDD55', // Yellow-orange
+    '#DDDD44', // Yellow
+    '#99CC44', // Yellow-green
+    '#66CC44', // Light green
+    '#00CC00'  // Green
+  ];
+  
   let ratingButtonsHTML = '';
   for (let i = 1; i <= 10; i++) {
     const feedbackLink = `${baseFeedbackUrl}?token=${feedbackToken}&rating=${i}&ticket_id=${ticketIdForLink}`;
     ratingButtonsHTML += `
-      <a href="${feedbackLink}" target="_blank" style="display: inline-block; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; background-color: #007bff; color: #ffffff; text-decoration: none; margin: 0 4px; font-weight: bold; font-size: 14px;">${i}</a>
+      <a href="${feedbackLink}" target="_blank" style="display: inline-block; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; background-color: ${colorGradient[i-1]}; color: #ffffff; text-decoration: none; margin: 0 4px; font-weight: bold; font-size: 14px;">${i}</a>
     `;
   }
 
@@ -85,9 +99,7 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
         <p class="sub-header">
           Thank you for contacting us! We'd love to hear about your recent experience with our support for ticket #${ticketDisplayIdForText}.
           <br><br>
-          <strong>How likely are you to recommend our service to a friend or colleague?</strong>
-          <br>
-          (1 = Not at all likely, 10 = Extremely likely)
+          <strong>Please rate your experience:</strong>
         </p>
         <div class="rating-buttons">
           ${ratingButtonsHTML}

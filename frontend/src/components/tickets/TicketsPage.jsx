@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../../utils/supabaseClient';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
-  Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip
+  Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip, Pagination
 } from 'react-bootstrap';
 import { 
   FaEnvelope, FaTicketAlt, FaUser, FaUserCog, FaComments, 
@@ -10,7 +10,7 @@ import {
   FaSmile, FaReply, FaCheck, FaExclamationCircle, FaBell, 
   FaHeadset, FaPaperPlane, FaCheckCircle, FaInfoCircle, FaAngleDown, FaAngleUp,
   FaPaperclip, FaDownload, FaFile, FaFileImage, FaFilePdf, FaFileWord, 
-  FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFileAlt, FaPlus, FaRegClock, FaRegCalendarAlt
+  FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFileAlt, FaPlus, FaRegClock, FaRegCalendarAlt, FaEye, FaTimes
 } from 'react-icons/fa';
 import EmailService from '../../services/email.service';
 import TicketService from '../../services/ticket.service';
@@ -100,8 +100,6 @@ const TicketsPage = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState({});
-  const [ccRecipients, setCcRecipients] = useState('');
-  const [showCcField, setShowCcField] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const fileInputRef = useRef(null);
   const selectedTicketRef = useRef(selectedTicket);
@@ -109,6 +107,58 @@ const TicketsPage = () => {
   const showAllEmailsRef = useRef(showAllEmails);
   const [generalMessagesChannel, setGeneralMessagesChannel] = useState(null);
   const activeTicketChannelRef = useRef(null);
+  const [searchText, setSearchText] = useState('');
+  const [filteredTickets, setFilteredTickets] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [ticketsPerPage] = useState(10);
+  
+  // Handle ticket search functionality
+  const handleTicketSearch = (text) => {
+    setSearchText(text);
+    // Reset to first page when search changes
+    setCurrentPage(1);
+    
+    if (!text.trim()) {
+      // If search is empty, reset filtered results
+      setFilteredTickets([]);
+      return;
+    }
+    
+    const searchLower = text.toLowerCase();
+    
+    // Filter active data based on current view
+    let dataToFilter = emailStatusFilter === 'open' ? tickets : resolvedEmails;
+    
+    // Search in tickets by ID, subject, customer name, and message content
+    const filtered = dataToFilter.filter(ticket => {
+      const ticketId = String(ticket.user_ticket_id || '').toLowerCase();
+      const subject = String(ticket.subject || '').toLowerCase();
+      const fromName = String(ticket.from_name || ticket.fromName || '').toLowerCase();
+      const fromAddress = String(ticket.from_address || '').toLowerCase();
+      const preview = String(ticket.preview || '').toLowerCase();
+      
+      return ticketId.includes(searchLower) || 
+             subject.includes(searchLower) || 
+             fromName.includes(searchLower) || 
+             fromAddress.includes(searchLower) || 
+             preview.includes(searchLower);
+    });
+    
+    setFilteredTickets(filtered);
+  };
+  
+  // Utility function to format file size
+  const formatFileSize = (bytes) => {
+    if (!bytes) return 'Unknown size';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  };
 
   // Derive ticketId and conversationId from selectedTicket for use in effects and other logic
   const ticketId = selectedTicket?.id;
@@ -116,6 +166,10 @@ const TicketsPage = () => {
 
   useEffect(() => {
     selectedTicketRef.current = selectedTicket;
+    
+    // Clear reply text and attachments when switching between tickets
+    setReplyText('');
+    setAttachments([]);
   }, [selectedTicket]);
 
   useEffect(() => {
@@ -127,6 +181,21 @@ const TicketsPage = () => {
   }, [showAllEmails]);
   const [userInfo, setUserInfo] = useState(null);
   const [processedEmailHtml, setProcessedEmailHtml] = useState('');
+
+  // Auto-clear toast messages after 2 seconds
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   // Helper function to find the latest message from a customer
   const getLatestCustomerMessage = (conversation) => {
@@ -587,8 +656,24 @@ const TicketsPage = () => {
     setError(''); // Clear previous errors
   }, [paramDeskId, userInfo]);
 
+  // Reset search and pagination when email status filter changes
+  useEffect(() => {
+    if (searchText.trim()) {
+      setSearchText('');
+      setFilteredTickets([]);
+    }
+    setCurrentPage(1);
+  }, [emailStatusFilter]);
+  
   // Effect for when selectedDeskId changes - fetch tickets and emails
   useEffect(() => {
+    // Clear search when desk changes
+    if (searchText.trim()) {
+      setSearchText('');
+      setFilteredTickets([]);
+    }
+    // Reset to first page when desk changes
+    setCurrentPage(1);
     console.log('Selected desk changed to:', selectedDeskId);
     setTickets([]);
     setSelectedTicket(null);
@@ -757,92 +842,38 @@ const TicketsPage = () => {
       console.error('Error fetching closed emails:', err);
       // Keep previous resolved emails state on error
     }
-  };
-
-  // Handle refresh button click
-  const handleRefresh = useCallback(() => {
-    console.log('[TicketsPage] Manual refresh triggered');
     
-    // Show loading spinner for manual refresh
-    setLoading(true);
-    
-    // Create a flag to track if component is still mounted
-    let isMounted = true;
-    
-    const refreshAllData = async () => {
-      try {
-        // Fetch open and closed tickets in parallel, similar to initial load
-        const promises = [];
-        
-        // Fetch open tickets
-        promises.push(
-          TicketService.getTicketsByStatus(selectedDeskId, 'open')
-            .then(data => {
-              if (!isMounted) return;
-              if (Array.isArray(data)) {
-                setTickets(data); // This state holds open tickets
-                console.log('Refreshed open tickets:', data?.length || 0);
-              }
-            })
-            .catch(err => console.error('Error refreshing open tickets:', err))
-        );
-
-        // Fetch closed tickets
-        promises.push(
-          TicketService.getTicketsByStatus(selectedDeskId, 'closed')
-            .then(data => {
-              if (!isMounted) return;
-              if (Array.isArray(data)) {
-                setResolvedEmails(data); // This state holds closed tickets
-                console.log('Refreshed closed tickets:', data?.length || 0);
-              }
-            })
-            .catch(err => console.error('Error refreshing closed tickets:', err))
-        );
-        
-        // Optionally, if you still need to refresh pure email lists (not tickets)
-        // you can add those EmailService calls here. For now, focusing on ticket consistency.
-        // Example: 
-        // if (showAllEmails) { ... EmailService.fetchEmails ... }
-        // else { ... EmailService.fetchUnreadEmails ... }
-
-        // Wait for all ticket-related requests to complete
-        await Promise.all(promises);
-        
-        if (isMounted) {
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('Error in refreshAllData:', err);
-        if (isMounted) {
-          setLoading(false);
-        }
+    // Fetch unread emails
+    try {
+      setLoading(true);
+      const unreadData = await EmailService.fetchUnreadEmails(selectedDeskId);
+      console.log('Unread emails data:', unreadData);
+      // Only update if we got valid data
+      if (Array.isArray(unreadData)) {
+        setUnreadEmails(unreadData);
+      } else {
+        console.warn('Invalid unread emails data received:', unreadData);
+        // Keep previous state
       }
-    };
-    
-    // Only proceed if we have a selected desk
-    if (selectedDeskId) {
-      refreshAllData();
-    } else {
       setLoading(false);
+    } catch (err) {
+      console.error('Error fetching unread emails:', err);
+      setLoading(false);
+      // Keep previous unread emails state on error
     }
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedDeskId, showAllEmails]);
+};
 
-  // Handlers for Supabase Realtime events (moved up to fix initialization errors)
-  const handleNewReply = useCallback((newReplyMessage) => {
-    console.log('[Supabase Realtime] handleNewReply: Processing new message for current conversation:', newReplyMessage);
-    
-    // Format the message to match the expected UI format
-    const formattedMessage = {
-      ...newReplyMessage,
-      // Transform body_html into the nested body.content format that UI expects
-      body: {
-        contentType: 'HTML',
-        content: newReplyMessage.body_html || newReplyMessage.body_preview || ''
+// Handlers for Supabase Realtime events (moved up to fix initialization errors)
+const handleNewReply = useCallback((newReplyMessage) => {
+  console.log('[Supabase Realtime] handleNewReply: Processing new message for current conversation:', newReplyMessage);
+  
+  // Format the message to match the expected UI format
+  const formattedMessage = {
+    ...newReplyMessage,
+    // Transform body_html into the nested body.content format that UI expects
+    body: {
+      contentType: 'HTML',
+      content: newReplyMessage.body_html || newReplyMessage.body_preview || ''
       },
       // Ensure bodyPreview is available at the top level as the UI expects
       bodyPreview: newReplyMessage.body_preview,
@@ -1011,6 +1042,7 @@ const TicketsPage = () => {
       conversation_id: newTicketPayload.conversation_id,
       from_name: newTicketPayload.from_name || 'Loading...',
       from_address: newTicketPayload.from_address,
+      user_ticket_id: newTicketPayload.user_ticket_id, // Include the user_ticket_id for display
       isLoading: true // Mark as loading until we fetch complete data
     };
     
@@ -1061,6 +1093,8 @@ const TicketsPage = () => {
           from_name: ticketDetails.from_name || newTicketPayload.from_name || 'Unknown',
           customer_name: ticketDetails.customer_name || ticketDetails.from_name,
           customer_email: ticketDetails.from_address || ticketDetails.customer_email,
+          // Make sure user_ticket_id is preserved from ticketDetails or newTicketPayload
+          user_ticket_id: ticketDetails.user_ticket_id || newTicketPayload.user_ticket_id,
           isLoading: false, // No longer loading
           hasCompleteData: true // Flag to indicate we have complete data
         };
@@ -1627,6 +1661,62 @@ const TicketsPage = () => {
     };
   }, [selectedDeskId]); // Re-create when selectedDeskId changes
 
+  // Function to scroll to the bottom of the messages container
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messagesEndRef]);
+  
+  // Effect to scroll to bottom when new messages arrive
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversation, scrollToBottom]);
+  
+  // Function to only refresh the current ticket's conversation threads
+  const handleRefreshCurrentTicket = useCallback(async () => {
+    if (!selectedTicket) {
+      console.log('No ticket selected, nothing to refresh');
+      return;
+    }
+    
+    console.log('[TicketsPage] Refreshing only current ticket conversation:', selectedTicket.id);
+    setRefreshing(true); // Use refreshing state instead of loading
+    
+    try {
+      await fetchConversationData(selectedTicket);
+      setSuccess('Ticket conversation refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing ticket conversation:', error);
+      setError('Failed to refresh ticket conversation. Please try again.');
+    } finally {
+      setRefreshing(false); // Reset refreshing state when done
+    }
+  }, [selectedTicket, fetchConversationData]);
+  
+  // Function to only refresh ticket listings without affecting the conversation view
+  const handleRefreshTicketListing = useCallback(async () => {
+    console.log('[TicketsPage] Refreshing only ticket listing');
+    setRefreshing(true);
+    
+    try {
+      // Determine which type of tickets to refresh based on current filter
+      if (emailStatusFilter === 'open') {
+        await fetchTickets();
+        await fetchUnreadEmails();
+      } else {
+        await fetchClosedEmails();
+      }
+      
+      setSuccess('Ticket listing refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing ticket listing:', error);
+      setError('Failed to refresh ticket listing. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [emailStatusFilter, fetchTickets, fetchClosedEmails, fetchUnreadEmails]);
+
   // Initial load of conversation when ticket is selected
   useEffect(() => {
     fetchConversationData(selectedTicket);
@@ -1664,17 +1754,26 @@ const TicketsPage = () => {
 
       // Step 2: Prepare the data for the reply.
       const emailId = messageToReplyTo.microsoft_message_id || messageToReplyTo.id;
-      const ccAddresses = ccRecipients.split(',').map(cc => cc.trim()).filter(cc => cc);
       const senderName = userInfo?.name || 'Support Agent';
       const senderEmail = userInfo?.email;
+      
+      // Get the current desk name from the desks array
+      const currentDesk = desks.find(desk => desk.id.toString() === selectedDeskId.toString());
+      const deskName = currentDesk?.name || 'Support Team';
+      
+      // Add signature to email content
+      const emailContent = `${replyText}
+
+<br><br>
+Thanks & Regards,<br>
+${deskName}`;
 
       const formData = new FormData();
       formData.append('emailId', emailId);
       formData.append('desk_id', selectedDeskId);
-      formData.append('content', replyText);
+      formData.append('content', emailContent); // Use the content with signature
       formData.append('sender_name', senderName);
       formData.append('sender_email', senderEmail);
-      ccAddresses.forEach(cc => formData.append('cc_recipients[]', cc));
       attachments.forEach(file => {
         formData.append('attachments', file);
       });
@@ -1686,7 +1785,6 @@ const TicketsPage = () => {
       // Step 4: Update the UI and state.
       setSuccess('Reply sent successfully!');
       setReplyText('');
-      setCcRecipients('');
       setAttachments([]);
       
       // Refresh the conversation to show the new reply.
@@ -1804,7 +1902,6 @@ const TicketsPage = () => {
       
       // Show success message
       setSuccess('Email resolved successfully!');
-      setTimeout(() => setSuccess(null), 3000);
       
       setSending(false);
       return response;
@@ -1912,59 +2009,40 @@ const TicketsPage = () => {
   return (
     <div className="tickets-container">
       <Row>
-        <Col md={3} className="tickets-sidebar">
+        <Col md={2} className="tickets-sidebar">
           <Card className="mb-3">
-            <Card.Header className="d-flex justify-content-between align-items-center">
-              <div className="d-flex align-items-center">
-                <div className="me-2">
-                  <Form.Select 
-                    size="sm" 
-                    value={selectedDeskId || ''}
-                    onChange={(e) => setSelectedDeskId(e.target.value)}
-                  >
-                    <option value="">Select Desk</option>
-                    {console.log('[DEBUG] Rendering dropdown with desks:', JSON.stringify(desks))}
-                    {Array.isArray(desks) && desks.length > 0 ? (
-                      desks.map(desk => {
-                        console.log('[DEBUG] Processing desk for dropdown:', desk);
-                        return desk && desk.id ? (
-                          <option key={desk.id} value={desk.id}>
-                            {desk.name || `Desk ${desk.id}`}
-                          </option>
-                        ) : (
-                          console.log('[DEBUG] Skipping desk with missing id:', desk)
-                        );
-                      })
-                    ) : (
-                      <option disabled value="">No desks assigned</option>
-                    )}
-                  </Form.Select>
+            <Card.Header className="p-2">
+              {/* First row with search and refresh button */}
+              <div className="d-flex align-items-center mb-2">
+                <div className="position-relative" style={{ flex: 1 }}>
+                  <Form.Control 
+                    type="text" 
+                    placeholder="Search ticket # or text"
+                    size="sm"
+                    value={searchText}
+                    onChange={(e) => handleTicketSearch(e.target.value)}
+                    className="pe-4"
+                  />
+                  {searchText && (
+                    <Button 
+                      variant="link" 
+                      size="sm" 
+                      className="position-absolute" 
+                      style={{ right: 0, top: 0, padding: '0.15rem 0.5rem' }}
+                      onClick={() => handleTicketSearch('')}
+                    >
+                      <FaTimes />
+                    </Button>
+                  )}
                 </div>
-                <Form.Select 
-                  size="sm" 
-                  value={emailStatusFilter}
-                  onChange={(e) => {
-                    console.log('Email status filter changed to:', e.target.value);
-                    console.log('Current resolved emails count:', resolvedEmails.length);
-                    setEmailStatusFilter(e.target.value);
-                    
-                    // Fetch closed tickets when switching to closed tab
-                    if (e.target.value === 'closed') {
-                      console.log('Fetching closed emails for closed tab...');
-                      fetchClosedEmails();
-                    }
-                  }}
-                  className="mx-2"
-                  style={{ width: 'auto' }}
-                >
-                  <option value="open">Open</option>
-                  <option value="closed">Closed</option>
-                </Form.Select>
                 <Button 
                   variant="outline-secondary" 
                   size="sm"
-                  onClick={handleRefresh}
+                  onClick={handleRefreshTicketListing}
                   disabled={refreshing}
+                  title="Refresh ticket listing"
+                  className="ms-1"
+                  style={{ minWidth: '32px' }}
                 >
                   {refreshing ? (
                     <Spinner animation="border" size="sm" />
@@ -1972,6 +2050,47 @@ const TicketsPage = () => {
                     <FaSyncAlt />
                   )}
                 </Button>
+              </div>
+              
+              {/* Second row with dropdowns */}
+              <div className="d-flex">
+                <Form.Select 
+                  size="sm" 
+                  value={selectedDeskId || ''}
+                  onChange={(e) => setSelectedDeskId(e.target.value)}
+                  className="me-1"
+                  style={{ flex: 3 }}
+                >
+                  <option value="">Select Desk</option>
+                  {Array.isArray(desks) && desks.length > 0 ? (
+                    desks.map(desk => (
+                      desk && desk.id ? (
+                        <option key={desk.id} value={desk.id}>
+                          {desk.name || `Desk ${desk.id}`}
+                        </option>
+                      ) : null
+                    ))
+                  ) : (
+                    <option disabled value="">No desks assigned</option>
+                  )}
+                </Form.Select>
+                
+                <Form.Select 
+                  size="sm" 
+                  value={emailStatusFilter}
+                  onChange={(e) => {
+                    setEmailStatusFilter(e.target.value);
+                    
+                    // Fetch closed tickets when switching to closed tab
+                    if (e.target.value === 'closed') {
+                      fetchClosedEmails();
+                    }
+                  }}
+                  style={{ flex: 2 }}
+                >
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </Form.Select>
               </div>
             </Card.Header>
             <Card.Body className="p-0">
@@ -2004,7 +2123,7 @@ const TicketsPage = () => {
                           {unreadEmails.map(email => (
                             <div 
                               key={email.id} 
-                              className={`ticket-item ${selectedTicket?.emailId === email.id ? 'active' : ''}`}
+                              className={`ticket-item compact ${selectedTicket?.emailId === email.id ? 'active' : ''}`}
                               onClick={() => {
                                 const newTicket = {
                                   id: `email-${email.id}`,
@@ -2061,7 +2180,7 @@ const TicketsPage = () => {
                             .map(conversation => (
                             <div 
                               key={conversation.id} 
-                              className={`ticket-item ${selectedTicket?.conversationId === conversation.id ? 'active' : ''}`}
+                              className={`ticket-item compact ${selectedTicket?.conversationId === conversation.id ? 'active' : ''}`}
                               onClick={() => {
                                 const newTicket = {
                                   id: `email-${conversation.latestMessageId}`,
@@ -2131,23 +2250,32 @@ const TicketsPage = () => {
                         // For open view, ensure we're only showing non-closed tickets
                         const openTickets = tickets.filter(ticket => ticket.status !== 'closed');
 
-                        const ticketsToDisplay = isClosedView ? closedTickets : openTickets;
+                        // Use filtered results if search is active
+                        const allTicketsToDisplay = searchText.trim() ? filteredTickets : (isClosedView ? closedTickets : openTickets);
                         const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets";
 
                         // Only render the section if there are tickets to display for the current filter
-                        if (ticketsToDisplay.length === 0) {
+                        if (allTicketsToDisplay.length === 0) {
                           return null; 
                         }
+                        
+                        // Calculate pagination indexes
+                        const indexOfLastTicket = currentPage * ticketsPerPage;
+                        const indexOfFirstTicket = indexOfLastTicket - ticketsPerPage;
+                        // Get current tickets for this page
+                        const ticketsToDisplay = allTicketsToDisplay.slice(indexOfFirstTicket, indexOfLastTicket);
+                        // Calculate total pages
+                        const totalPages = Math.ceil(allTicketsToDisplay.length / ticketsPerPage);
 
-                        return (
+                         return (
                           <div className="ticket-section">
                             <div className="ticket-section-header">
-                              <small><FaTicketAlt className="me-1" /> {sectionTitle} ({ticketsToDisplay.length})</small>
+                              <small><FaTicketAlt className="me-1" /> {sectionTitle} ({allTicketsToDisplay.length})</small>
                             </div>
                             {ticketsToDisplay.map(ticket => (
                               <div 
                                 key={ticket.id} 
-                                className={`ticket-item ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
+                                className={`ticket-item compact ${selectedTicket?.id === ticket.id ? 'active' : ''} ${ticket.reopened_from_closed ? 'reopened-ticket' : ''}`}
                                 onClick={() => {
                                   // Only attempt to update status if it's not the closed view and ticket is 'new'
                                   if (!isClosedView && ticket.status === 'new') {
@@ -2165,7 +2293,12 @@ const TicketsPage = () => {
                                 }}
                               >
                                 <div className="ticket-header">
-                                  <div className="ticket-subject">{ticket.subject || 'No Subject'}</div>
+                                  <div className="ticket-subject">
+                                    {ticket.user_ticket_id && (
+                                      <span className="ticket-id">Ticket[{ticket.user_ticket_id}] </span>
+                                    )}
+                                    {ticket.subject || 'No Subject'}
+                                  </div>
                                   <small className="ticket-time">{
                                     (() => {
                                       const dateStr = ticket.last_message_at || ticket.updated_at || ticket.created_at;
@@ -2201,8 +2334,53 @@ const TicketsPage = () => {
                                   <small>{String(ticket.preview || ticket.description || ticket.subject || 'No preview available').substring(0, 100)}</small>
                                 </div>
                               </div>
-                            ))}
-                          </div>
+                             ))}
+                              
+                             {/* Pagination */}
+                             {totalPages > 1 && (
+                               <div className="pagination-container d-flex justify-content-center mt-2 mb-1">
+                                 <style>
+                                   {`
+                                     .white-pagination .page-item .page-link {
+                                       background-color: white;
+                                       color: #333;
+                                       border-color: #ddd;
+                                     }
+                                     .white-pagination .page-item.active .page-link {
+                                       background-color: #f8f9fa;
+                                       color: #333;
+                                       border-color: #ddd;
+                                       font-weight: bold;
+                                     }
+                                     .white-pagination .page-item .page-link:hover {
+                                       background-color: #f1f1f1;
+                                     }
+                                   `}
+                                 </style>
+                                 <Pagination size="sm" className="white-pagination">
+                                   <Pagination.Prev 
+                                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                     disabled={currentPage === 1}
+                                   />
+                                   
+                                   {Array.from({ length: totalPages }, (_, i) => i + 1).map(pageNumber => (
+                                     <Pagination.Item 
+                                       key={pageNumber} 
+                                       active={pageNumber === currentPage}
+                                       onClick={() => setCurrentPage(pageNumber)}
+                                     >
+                                       {pageNumber}
+                                     </Pagination.Item>
+                                   ))}
+                                   
+                                   <Pagination.Next 
+                                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                     disabled={currentPage === totalPages}
+                                   />
+                                 </Pagination>
+                               </div>
+                             )}
+                           </div>
                         );
                       })()}
                       {/* End of Tickets Section */}
@@ -2214,31 +2392,33 @@ const TicketsPage = () => {
           </Card>
         </Col>
         
-        <Col md={9}>
+        <Col md={10}>
           {selectedTicket ? (
             <Card className="ticket-detail">
               <Card.Header className="d-flex justify-content-between align-items-center">
                 <div>
                   <h5 className="mb-0">
+                    {selectedTicket.user_ticket_id && (
+                      <span className="ticket-id">Ticket[{selectedTicket.user_ticket_id}] </span>
+                    )}
                     {selectedTicket.subject}
                     {selectedTicket.messageCount > 1 && (
                       <Badge bg="secondary" className="ms-2">{selectedTicket.messageCount} messages</Badge>
                     )}
                   </h5>
                   <small className="text-muted">
-                    {selectedTicket.isEmail ? 
-                      <>From: {selectedTicket.from}</> : 
-                      <>Customer: {selectedTicket.customer_name || selectedTicket.customer_email}</>} | 
-                    {!selectedTicket.isEmail && <>
-                      <Badge 
-                        bg={selectedTicket.status === 'new' ? 'info' : 
-                           selectedTicket.status === 'open' ? 'success' : 
-                           selectedTicket.status === 'closed' ? 'secondary' : 'warning'} 
-                        pill
-                      >
-                        {selectedTicket.status}
-                      </Badge> | 
-                    </>}
+                    {!selectedTicket.isEmail && (
+                      <>
+                        <Badge 
+                          bg={selectedTicket.status === 'new' ? 'info' : 
+                             selectedTicket.status === 'open' ? 'success' : 
+                             selectedTicket.status === 'closed' ? 'secondary' : 'warning'} 
+                          pill
+                        >
+                          {selectedTicket.status}
+                        </Badge> | 
+                      </>
+                    )}
                     <FaRegCalendarAlt className="mx-1" /> {
                       (() => {
                         try {
@@ -2266,38 +2446,10 @@ const TicketsPage = () => {
                   <Button 
                     variant="outline-secondary" 
                     size="sm" 
-                    className="me-2"
-                    onClick={handleRefresh}
+                    onClick={handleRefreshCurrentTicket}
                   >
                     <FaSyncAlt className="me-1" /> Refresh
                   </Button>
-                  
-                  {/* Auto-refresh is always enabled by default - removed toggle button */}
-                  
-                  {selectedTicket.isEmail ? (
-                    <></>
-                  ) : (
-                    <Dropdown className="d-inline-block">
-                      <Dropdown.Toggle variant="outline-primary" size="sm" id="ticket-actions">
-                        <FaUserCog className="me-1" /> Actions
-                      </Dropdown.Toggle>
-                      <Dropdown.Menu>
-                        <Dropdown.Item onClick={() => updateTicketStatus(selectedTicket.id, 'open')}>
-                          <Badge bg="success" className="me-2">Open</Badge> Mark as Open
-                        </Dropdown.Item>
-                        <Dropdown.Item onClick={() => updateTicketStatus(selectedTicket.id, 'pending')}>
-                          <Badge bg="warning" className="me-2">Pending</Badge> Mark as Pending
-                        </Dropdown.Item>
-                        <Dropdown.Item onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}>
-                          <Badge bg="secondary" className="me-2">Closed</Badge> Close Ticket
-                        </Dropdown.Item>
-                        <Dropdown.Divider />
-                        <Dropdown.Item>
-                          <FaUserCog className="me-2" /> Assign Ticket
-                        </Dropdown.Item>
-                      </Dropdown.Menu>
-                    </Dropdown>
-                  )}
                 </div>
               </Card.Header>
               <Card.Body className="conversation-container p-0">
@@ -2416,13 +2568,17 @@ const TicketsPage = () => {
                               
                               {/* Display attachments section - handles both Microsoft Graph attachments and S3 attachments */}
                               {(message.hasAttachments || (message.attachments_urls && message.attachments_urls.length > 0)) && (
-                                <div className="message-attachments mt-3">
-                                  <div className="attachments-header mb-2">
-                                    <FaPaperclip className="me-1" /> Attachments
-                                    {message.attachments && message.attachments.length > 0 && <span> ({message.attachments.length})</span>}
-                                    {message.attachments_urls && message.attachments_urls.length > 0 && <span> ({message.attachments_urls.length})</span>}
+                                <div className="message-attachments mt-2">
+                                  <div className="attachments-header mb-1">
+                                    <FaPaperclip className="me-1" /> 
+                                    <small>
+                                      Attachments
+                                      {message.attachments && message.attachments.length > 0 && <span> ({message.attachments.length})</span>}
+                                      {message.attachments_urls && message.attachments_urls.length > 0 && <span> ({message.attachments_urls.length})</span>}
+                                    </small>
                                   </div>
-                                  <div className="attachments-list">
+                                  <div className="attachments-list d-flex flex-wrap gap-2">
+                                    
                                     {/* Handle Microsoft Graph attachments */}
                                     {message.attachments && message.attachments.length > 0 && message.attachments.map((attachment, i) => {
                                       // Determine icon based on file type
@@ -2446,55 +2602,114 @@ const TicketsPage = () => {
                                         }
                                       }
                                       
-                                      // Format file size
-                                      const formatFileSize = (bytes) => {
-                                        if (!bytes) return 'Unknown size';
-                                        const units = ['B', 'KB', 'MB', 'GB'];
-                                        let size = bytes;
-                                        let unitIndex = 0;
-                                        while (size >= 1024 && unitIndex < units.length - 1) {
-                                          size /= 1024;
-                                          unitIndex++;
-                                        }
-                                        return `${size.toFixed(1)} ${units[unitIndex]}`;
-                                      };
+                                      const isImage = attachment.contentType && attachment.contentType.startsWith('image/') && attachment.url;
                                       
                                       return (
-                                        <div key={`ms-${attachment.id || i}`} className="attachment-item p-2 border rounded mb-2">
-                                          <div className="d-flex align-items-center mb-2">
-                                            <div className="attachment-icon me-2">
-                                              {/* Show file icon if not an image or if URL is missing */}
-                                              {!(attachment.contentType && attachment.contentType.startsWith('image/') && attachment.url) && icon}
-                                            </div>
-                                            <div className="attachment-details flex-grow-1">
-                                              <div className="attachment-name">{attachment.name}</div>
-                                              <small className="text-muted">{formatFileSize(attachment.size)}</small>
-                                            </div>
-                                            <div className="attachment-actions">
-                                              <Button 
-                                                variant="outline-primary" 
-                                                size="sm"
-                                                onClick={() => handleS3Download(attachment, message.desk_id)}
-                                              >
-                                                <FaDownload /> Download
-                                              </Button>
-                                            </div>
-                                          </div>
-                                          {/* Image Preview Area */}
-                                          {attachment.contentType && attachment.contentType.startsWith('image/') && attachment.url && (
-                                            <div className="attachment-preview mt-2 text-center">
+                                        <div key={`ms-${attachment.id || i}`} className="attachment-item border rounded" style={{ width: '130px', maxWidth: '130px' }}>
+                                          {isImage ? (
+                                            <div className="text-center p-1">
                                               <img 
                                                 src={attachment.url} 
                                                 alt={`Preview of ${attachment.name}`} 
-                                                style={{ maxWidth: '100%', maxHeight: '200px', border: '1px solid #ddd', borderRadius: '4px' }} 
+                                                style={{ maxWidth: '100%', height: '60px', objectFit: 'contain', borderRadius: '2px' }} 
                                               />
                                             </div>
+                                          ) : (
+                                            <div className="d-flex justify-content-center align-items-center p-1" style={{ height: '50px' }}>
+                                              <span style={{ fontSize: '24px' }}>{icon}</span>
+                                            </div>
                                           )}
+                                          <div className="p-1 border-top bg-light" style={{ fontSize: '0.8rem' }}>
+                                            <div className="text-truncate" title={attachment.name}>{attachment.name}</div>
+                                            <div className="d-flex justify-content-between align-items-center">
+                                              <small className="text-muted">{formatFileSize(attachment.size)}</small>
+                                              <Button 
+                                                variant="link" 
+                                                size="sm"
+                                                className="p-0 text-primary"
+                                                onClick={() => handleS3Download(attachment, message.desk_id)}
+                                                title="Open attachment"
+                                              >
+                                                <FaEye />
+                                              </Button>
+                                            </div>
+                                          </div>
                                         </div>
                                       );
                                     })}
                                     
-
+                                    {/* Handle S3 attachments from attachments_urls array */}
+                                    {message.attachments_urls && message.attachments_urls.length > 0 && message.attachments_urls.map((attachment, i) => {
+                                      // Determine icon based on file type
+                                      let icon = <FaFile />;
+                                      if (attachment.name) {
+                                        const extension = attachment.name.split('.').pop().toLowerCase();
+                                        if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'].includes(extension)) {
+                                          icon = <FaFileImage />;
+                                        } else if (['pdf'].includes(extension)) {
+                                          icon = <FaFilePdf />;
+                                        } else if (['doc', 'docx'].includes(extension)) {
+                                          icon = <FaFileWord />;
+                                        } else if (['xls', 'xlsx'].includes(extension)) {
+                                          icon = <FaFileExcel />;
+                                        } else if (['ppt', 'pptx'].includes(extension)) {
+                                          icon = <FaFilePowerpoint />;
+                                        } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extension)) {
+                                          icon = <FaFileArchive />;
+                                        } else if (['txt', 'text'].includes(extension)) {
+                                          icon = <FaFileAlt />;
+                                        }
+                                      }
+                                      
+                                      // Check if it's an image for preview
+                                      let isImage = attachment.contentType && attachment.contentType.startsWith('image/');
+                                      if (!isImage && attachment.name) {
+                                        const extension = attachment.name.split('.').pop().toLowerCase();
+                                        if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'].includes(extension)) {
+                                          isImage = true;
+                                        }
+                                      }
+                                      
+                                      const fileName = attachment.name || attachment.filename || `Attachment ${i+1}`;
+                                      
+                                      return (
+                                        <div key={`s3-${i}`} className="attachment-item border rounded" style={{ width: '130px', maxWidth: '130px' }}>
+                                          {isImage && attachment.url ? (
+                                            <div className="text-center p-1">
+                                              <img 
+                                                src={attachment.url} 
+                                                alt={`Preview of ${fileName}`} 
+                                                style={{ maxWidth: '100%', height: '60px', objectFit: 'contain', borderRadius: '2px' }} 
+                                                onError={(e) => {
+                                                  e.target.style.display = 'none';
+                                                  e.target.parentNode.innerHTML = `<div class="d-flex justify-content-center align-items-center" style="height: 60px"><span style="fontSize: 24px"><FaFileImage /></span></div>`;
+                                                }} 
+                                              />
+                                            </div>
+                                          ) : (
+                                            <div className="d-flex justify-content-center align-items-center p-1" style={{ height: '50px' }}>
+                                              <span style={{ fontSize: '24px' }}>{icon}</span>
+                                            </div>
+                                          )}
+                                          <div className="p-1 border-top bg-light" style={{ fontSize: '0.8rem' }}>
+                                            <div className="text-truncate" title={fileName}>{fileName}</div>
+                                            <div className="d-flex justify-content-between align-items-center">
+                                              <small className="text-muted">{attachment.size ? formatFileSize(attachment.size) : 'S3'}</small>
+                                              <Button 
+                                                variant="link" 
+                                                size="sm"
+                                                className="p-0 text-primary"
+                                                onClick={() => window.open(attachment.url, '_blank')}
+                                                title="Open in new tab"
+                                              >
+                                                <FaEye />
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    
                                   </div>
                                 </div>
                               )}
@@ -2595,18 +2810,7 @@ const TicketsPage = () => {
                 <Card.Footer>
                   <Form>
                     <Form.Group>
-                      {showCcField && (
-                        <InputGroup className="mb-2">
-                          <InputGroup.Text>CC:</InputGroup.Text>
-                          <Form.Control 
-                            type="text" 
-                            placeholder="recipient1@example.com, recipient2@example.com"
-                            value={ccRecipients}
-                            onChange={(e) => setCcRecipients(e.target.value)}
-                            disabled={sending}
-                          />
-                        </InputGroup>
-                      )}
+                      {/* CC field removed */}
                       <InputGroup>
                         <Form.Control 
                           as="textarea" 
@@ -2648,7 +2852,7 @@ const TicketsPage = () => {
                             overlay={<Tooltip>Attach files</Tooltip>}
                           >
                             <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
-                              <FaPaperclip />
+                              <FaPaperclip /> Add attachments
                             </Button>
                           </OverlayTrigger>
                           <input 
@@ -2658,13 +2862,7 @@ const TicketsPage = () => {
                             onChange={handleFileChange} 
                             style={{ display: 'none' }} 
                           />
-                          <Button
-                            variant="link"
-                            className="text-muted p-0"
-                            onClick={() => setShowCcField(!showCcField)}
-                          >
-                            CC{showCcField ? ' ▲' : ' ▼'}
-                          </Button>
+                          {/* CC button removed */}
                         </div>
                         <div>
                           {selectedTicket.isEmail ? (
@@ -2679,10 +2877,10 @@ const TicketsPage = () => {
                           ) : (
                             <Button 
                               variant="outline-secondary" 
-                              className="me-2"
+                              className="me-2 resolve-button"
                               onClick={() => updateTicketStatus(selectedTicket.id, 'closed')}
                             >
-                              <FaCheck className="me-1" /> Close
+                              <FaCheck className="me-1" /> Resolve
                             </Button>
                           )}
                           <Button 
@@ -2725,5 +2923,44 @@ const TicketsPage = () => {
     </div>
   );
 };
+
+// Add custom CSS for compact ticket items
+const style = document.createElement('style');
+style.innerHTML = `
+  .ticket-item.compact {
+    padding: 8px;
+  }
+  .ticket-item.compact .ticket-header {
+    margin-bottom: 4px;
+  }
+  .ticket-item.compact .ticket-subject {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 85%;
+  }
+  .ticket-item.compact .ticket-time {
+    font-size: 0.7rem;
+  }
+  .ticket-item.compact .ticket-info {
+    margin-bottom: 3px;
+  }
+  .ticket-item.compact .ticket-customer {
+    font-size: 0.75rem;
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ticket-item.compact .ticket-message small {
+    font-size: 0.7rem;
+    -webkit-line-clamp: 1;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+`;
+document.head.appendChild(style);
 
 export default TicketsPage;

@@ -59,8 +59,9 @@ exports.getTickets = async (req, res) => {
       query = query.eq('status', req.query.status);
     }
     
-    if (req.query.deskId) {
-      query = query.eq('desk_id', req.query.deskId);
+    // Check for desk_id parameter from frontend
+    if (req.query.desk_id) {
+      query = query.eq('desk_id', req.query.desk_id);
     }
     
     if (req.query.assigned_to) {
@@ -443,13 +444,170 @@ exports.submitFeedback = async (req, res) => {
     const displayId = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
     console.log(`Feedback submitted successfully for ticket ${ticket.id}: Rating ${parsedRating}`);
     
-    res.send(
-      `<html><body>
-        <h1>Thank You For Your Feedback!</h1>
-        <p>Your rating of ${parsedRating} for ticket #${displayId} has been recorded.</p>
-        <p>We appreciate you taking the time to help us improve our service.</p>
-      </body></html>`
-    );
+    // Determine color and emoji based on rating
+    let color = '#3498db'; // Default blue
+    let emoji = '🙂';
+    let gradientColors = 'linear-gradient(135deg, #3498db, #9b59b6)';
+    
+    if (parsedRating >= 9) {
+      color = '#1e8449'; // Dark green
+      emoji = '😍';
+      gradientColors = 'linear-gradient(135deg, #2ecc71, #27ae60)';
+    } else if (parsedRating >= 7) {
+      color = '#2ecc71'; // Green
+      emoji = '😊';
+      gradientColors = 'linear-gradient(135deg, #2ecc71, #3498db)';
+    } else if (parsedRating >= 5) {
+      color = '#3498db'; // Blue
+      emoji = '🙂';
+      gradientColors = 'linear-gradient(135deg, #3498db, #9b59b6)';
+    } else if (parsedRating >= 3) {
+      color = '#e67e22'; // Orange
+      emoji = '😕';
+      gradientColors = 'linear-gradient(135deg, #e67e22, #f39c12)';
+    } else {
+      color = '#e74c3c'; // Red
+      emoji = '😞';
+      gradientColors = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+    }
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Thank You For Your Feedback</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <style>
+        body {
+          font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          text-align: center;
+          margin: 0;
+          padding: 0;
+          background: ${gradientColors || '#f5f5f7'};
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+          transition: background 0.5s ease;
+        }
+        .card-container {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          width: 100%;
+          padding: 20px;
+          box-sizing: border-box;
+        }
+        .container {
+          background-color: white;
+          border-radius: 18px;
+          box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+          padding: 40px;
+          max-width: 500px;
+          width: 100%;
+          margin: 0 auto;
+          position: relative;
+          overflow: hidden;
+        }
+        .container:before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 6px;
+          background: ${color};
+        }
+        h1 {
+          color: #333;
+          font-size: 32px;
+          margin-bottom: 15px;
+          font-weight: 700;
+        }
+        .rating-container {
+          padding: 20px 0;
+        }
+        .emoji {
+          font-size: 68px;
+          margin: 10px 0;
+          display: block;
+          line-height: 1;
+        }
+        .rating-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 100px;
+          height: 100px;
+          border-radius: 50%;
+          background: ${gradientColors || color};
+          margin: 10px auto;
+          color: white;
+          font-size: 42px;
+          font-weight: bold;
+          box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        .rating-text {
+          font-size: 24px;
+          font-weight: 600;
+          margin: 15px 0;
+          color: ${color};
+        }
+        .message {
+          background-color: #f9f9f9;
+          border-radius: 12px;
+          padding: 20px;
+          margin: 20px 0;
+        }
+        p {
+          color: #555;
+          line-height: 1.6;
+          font-size: 16px;
+          margin: 8px 0;
+        }
+        .close-btn {
+          display: inline-block;
+          margin-top: 20px;
+          padding: 12px 24px;
+          background-color: ${color};
+          color: white;
+          border: none;
+          border-radius: 6px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: transform 0.2s, background-color 0.2s;
+          text-decoration: none;
+          font-size: 16px;
+        }
+        .close-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+      </style>
+    </head>
+    <body>
+      <div class="card-container">
+        <div class="container">
+          <h1>Thank You For Your Feedback!</h1>
+          
+          <div class="rating-container">
+            <span class="emoji">${emoji}</span>
+            <div class="rating-badge">${parsedRating}</div>
+            <div class="rating-text">${parsedRating >= 8 ? 'Excellent!' : parsedRating >= 5 ? 'Thank You' : 'We\'ll Improve'}</div>
+          </div>
+          
+          <div class="message">
+            <p>Your rating of <strong>${parsedRating}</strong> for ticket #${displayId} has been recorded.</p>
+            <p>We appreciate you taking the time to help us improve our service.</p>
+          </div>
+          
+          <a href="#" class="close-btn" onclick="window.close(); return false;">Close Window</a>
+        </div>
+      </div>
+    </body>
+    </html>
+    `);
 
   } catch (error) {
     console.error('Error in submitFeedback:', error);

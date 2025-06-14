@@ -104,23 +104,17 @@ const Header = ({ user, onLogout }) => {
               </div>
               
               <div className="dropdown-body">
-                <Link to="/profile" className="dropdown-item" onClick={() => setDropdownOpen(false)}>
-                  <FaUser />
-                  <span>Profile</span>
-                </Link>
+                {/* Profile link removed as requested */}
                 
                 {/* Check both user props and local userData for admin role */}
                 {(user?.role === 'admin' || userData?.role === 'admin' || 
                  (user?.user && user?.user.role === 'admin') ||
                  JSON.parse(localStorage.getItem('user'))?.user?.role === 'admin') && (
                   <>
-                    <div className="divider"></div>
+                    {/* No divider needed here since Profile link was removed */}
                     <div className="section-title">Admin</div>
                     
-                    <Link to="/admin/oauth-setup" className="dropdown-item" onClick={() => setDropdownOpen(false)}>
-                      <FaKey />
-                      <span>OAuth2 Setup</span>
-                    </Link>
+                    {/* OAuth2 Setup link removed as requested */}
                     
                     <Link to="/admin/user-management" className="dropdown-item" onClick={() => setDropdownOpen(false)}>
                       <FaUsers />
