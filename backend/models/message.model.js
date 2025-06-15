@@ -3,6 +3,33 @@ const { assignUserRoundRobin } = require('../utils/direct_assignment.utils');
 
 const Message = {
   /**
+   * Create a simple message (mainly for internal notes and ticket updates)
+   * This is a simplified wrapper around logMessage to maintain consistency with other models
+   */
+  create: async (messageData) => {
+    try {
+      console.log('[MessageModel] Creating new message via create method:', messageData);
+      
+      // Format data to match logMessage requirements
+      const formattedData = {
+        desk_id: messageData.desk_id,
+        ticket_id: messageData.ticket_id,
+        body_html: messageData.content,
+        body_text: messageData.content,
+        body_preview: messageData.content?.substring(0, 100),
+        sender_id: messageData.sender_id,
+        is_internal: messageData.is_internal || false,
+        direction: messageData.is_internal ? 'internal' : 'outgoing'
+      };
+      
+      // Use logMessage to actually create the message
+      return await Message.logMessage(formattedData);
+    } catch (error) {
+      console.error('[MessageModel] Error creating message:', error);
+      throw error;
+    }
+  },
+  /**
    * Logs an email message (incoming or outgoing) to the database.
    * This method is intended to be the primary way to save email messages.
    * It will also associate the message with a ticket if a ticket_id is provided.
@@ -133,6 +160,37 @@ const Message = {
           console.error(`[MessageModel] Failed to update desk ${desk_id} with last_assigned_user_id ${data[0].assigned_to_user_id}:`, updateError);
         } else {
           console.log(`[MessageModel] Successfully updated desk ${desk_id} last_assigned_user_id to ${data[0].assigned_to_user_id}.`);
+        }
+        
+        // Update the ticket's assigned_to_user_id and assigned_at
+        if (microsoft_conversation_id) {
+          console.log(`[MessageModel] Updating ticket with conversation_id ${microsoft_conversation_id} to assign user ${data[0].assigned_to_user_id}`);
+          const { data: ticketData, error: ticketError } = await supabase
+            .from('tickets')
+            .select('id')
+            .eq('conversation_id', microsoft_conversation_id)
+            .limit(1);
+          
+          if (ticketError) {
+            console.error(`[MessageModel] Failed to find ticket with conversation_id ${microsoft_conversation_id}:`, ticketError);
+          } else if (ticketData && ticketData.length > 0) {
+            const ticketId = ticketData[0].id;
+            const { error: ticketUpdateError } = await supabase
+              .from('tickets')
+              .update({ 
+                assigned_to_user_id: data[0].assigned_to_user_id,
+                assigned_at: new Date().toISOString()
+              })
+              .eq('id', ticketId);
+              
+            if (ticketUpdateError) {
+              console.error(`[MessageModel] Failed to update ticket ${ticketId} with assigned_to_user_id ${data[0].assigned_to_user_id}:`, ticketUpdateError);
+            } else {
+              console.log(`[MessageModel] Successfully updated ticket ${ticketId} assigned_to_user_id to ${data[0].assigned_to_user_id}.`);
+            }
+          } else {
+            console.warn(`[MessageModel] No ticket found with conversation_id ${microsoft_conversation_id}.`);
+          }
         }
       } else if (data && data[0] && !data[0].assigned_to_user_id && direction === 'incoming') {
         console.warn(`[MessageModel] Message ${data[0].id} inserted WITHOUT an assigned_to_user_id for an incoming message to desk ${desk_id}.`);

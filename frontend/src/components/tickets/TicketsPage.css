@@ -51,6 +51,25 @@
   margin-bottom: 5px;
 }
 
+/* Custom style for resolve button with green hover effect */
+.resolve-button {
+  color: #6c757d;
+  background-color: transparent;
+  border-color: #6c757d;
+}
+
+.resolve-button:hover {
+  color: #fff;
+  background-color: #28a745;
+  border-color: #28a745;
+}
+
+.ticket-id {
+  font-weight: 500;
+  color: #495057;
+  margin-right: 4px;
+}
+
 .ticket-subject {
   font-weight: 600;
   white-space: nowrap;

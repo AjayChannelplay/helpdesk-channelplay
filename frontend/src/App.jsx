@@ -25,6 +25,9 @@ import DeskManagement from './components/admin/desks/DeskManagement';
 import UserManagement from './components/admin/users/UserManagement';
 import DesksPage from './components/desks/DesksPage';
 
+// Debug Components
+import SupabaseTest from './components/debug/SupabaseTest';
+
 // Components - Agent
 import AgentDashboard from './components/agent/AgentDashboard';
 import AgentFeedbackList from './components/agent/AgentFeedbackList';
@@ -107,6 +110,7 @@ function App() {
                 <Route path="user-management" element={<UserManagement />} />
                 <Route path="desk-management" element={<DeskManagement />} />
                 <Route path="system-logs" element={<div className="p-4"><h2>System Logs</h2><p>System logs interface coming soon.</p></div>} />
+                <Route path="supabase-test" element={<SupabaseTest />} />
               </Route>
               
               {/* 404 route */}

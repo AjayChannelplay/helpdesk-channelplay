@@ -19,6 +19,12 @@ const Feedback = {
     if (!rating) {
       throw new Error('Missing required field: rating');
     }
+    
+    // Validate rating is a number between 1-10
+    const numericRating = parseInt(rating, 10);
+    if (isNaN(numericRating) || numericRating < 1 || numericRating > 10) {
+      throw new Error('Invalid rating: must be a number between 1 and 10');
+    }
 
     // Ensure we have at least a conversation_id
     if (!conversation_id) {

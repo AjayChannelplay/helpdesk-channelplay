@@ -43,6 +43,18 @@ const UserManagement = () => {
     fetchUsersAndDesks();
   }, [fetchUsersAndDesks]);
 
+  // Auto-dismiss success and error messages after 3 seconds
+  useEffect(() => {
+    if (successMessage || error) {
+      const timer = setTimeout(() => {
+        setSuccessMessage('');
+        setError('');
+      }, 3000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage, error]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });

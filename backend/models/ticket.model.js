@@ -36,8 +36,7 @@ const Ticket = {
         .from('tickets')
         .select(`
           *,
-          creator:created_by (username),
-          assignee:assigned_to (username),
+          assignee:assigned_to_user_id (username),
           desk:desk_id (name)
         `)
         .eq('id', id)
@@ -52,11 +51,10 @@ const Ticket = {
       }
       
       // Transform the data to match the previous structure if needed, or adjust consuming code.
-      // For example, to match 'creator_name', 'assignee_name', 'desk_name':
       if (data) {
         return {
           ...data,
-          creator_name: data.creator?.username,
+          // No creator_name since created_by doesn't exist in schema
           assignee_name: data.assignee?.username,
           desk_name: data.desk?.name,
         };
@@ -109,33 +107,37 @@ const Ticket = {
   
   // Update ticket
   update: async (id, ticketData) => {
-    const { subject, description, priority, status, desk_id, assigned_to } = ticketData;
-    
-    const query = `
-      UPDATE tickets
-      SET subject = $1, 
-          description = $2, 
-          priority = $3, 
-          status = $4, 
-          desk_id = $5, 
-          assigned_to = $6,
-          updated_at = NOW()
-      WHERE id = $7
-      RETURNING *
-    `;
-    
     try {
-      const result = await db.query(query, [
-        subject, 
-        description, 
-        priority, 
-        status, 
-        desk_id, 
-        assigned_to, 
-        id
-      ]);
-      return result.rows[0];
+      // Extract the fields to update from ticketData
+      const updateData = {};
+      
+      // Only include fields that are provided
+      if (ticketData.subject !== undefined) updateData.subject = ticketData.subject;
+      if (ticketData.description !== undefined) updateData.description = ticketData.description;
+      if (ticketData.priority !== undefined) updateData.priority = ticketData.priority;
+      if (ticketData.status !== undefined) updateData.status = ticketData.status;
+      if (ticketData.desk_id !== undefined) updateData.desk_id = ticketData.desk_id;
+      if (ticketData.assigned_to_user_id !== undefined) updateData.assigned_to_user_id = ticketData.assigned_to_user_id;
+      if (ticketData.assigned_to !== undefined) updateData.assigned_to_user_id = ticketData.assigned_to; // For backward compatibility
+      
+      // Add the updated_at timestamp
+      updateData.updated_at = new Date();
+      
+      const { data, error } = await supabase
+        .from('tickets')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Error updating ticket:', error);
+        throw new Error(`Error updating ticket: ${error.message}`);
+      }
+      
+      return data;
     } catch (error) {
+      console.error('Exception in Ticket.update:', error);
       throw new Error(`Error updating ticket: ${error.message}`);
     }
   },

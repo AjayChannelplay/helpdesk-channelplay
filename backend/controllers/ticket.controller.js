@@ -2,6 +2,10 @@ const Ticket = require('../models/ticket.model');
 const Message = require('../models/message.model');
 const Desk = require('../models/desk.model');
 const EmailService = require('../utils/email.service');
+const emailController = require('./email.controller'); // Import email controller for resolveTicket
+const { supabase } = require('../config/db.config'); // Add supabase client import
+const { generateFeedbackEmailHTML } = require('../utils/emailTemplates');
+const { v4: uuidv4 } = require('uuid');
 
 // Create a new ticket
 exports.createTicket = async (req, res) => {
@@ -55,12 +59,26 @@ exports.getTickets = async (req, res) => {
       query = query.eq('status', req.query.status);
     }
     
-    if (req.query.deskId) {
-      query = query.eq('desk_id', req.query.deskId);
+    // Check for desk_id parameter from frontend
+    if (req.query.desk_id) {
+      query = query.eq('desk_id', req.query.desk_id);
     }
     
     if (req.query.assigned_to) {
       query = query.eq('assigned_to', req.query.assigned_to);
+    }
+    
+    // Role-based filtering: agents can only see tickets assigned to them
+    // While admins/supervisors can see all tickets
+    const userId = req.userId;
+    const userRole = req.userRole;
+    
+    console.log(`User ${userId} with role ${userRole} requesting tickets`);
+    
+    // If the user is not an admin or supervisor, filter by assigned_to_user_id
+    if (userRole !== 'admin' && userRole !== 'supervisor') {
+      console.log(`Filtering tickets for agent ${userId}`);
+      query = query.eq('assigned_to_user_id', userId);
     }
     
     // Execute the query
@@ -70,6 +88,7 @@ exports.getTickets = async (req, res) => {
       throw new Error(`Error finding tickets: ${error.message}`);
     }
     
+    console.log(`Found ${data?.length || 0} tickets for user ${userId}`);
     res.status(200).json({ data });
   } catch (error) {
     console.error('Error in getTickets:', error);
@@ -113,6 +132,9 @@ exports.updateTicket = async (req, res) => {
       return res.status(404).json({ message: 'Ticket not found' });
     }
     
+    // Check if status is changing to closed
+    const statusChangingToClosed = req.body.status === 'closed' && ticket.status !== 'closed';
+    
     // Update ticket
     const updatedTicket = await Ticket.update(req.params.id, {
       subject: req.body.subject || ticket.subject,
@@ -120,17 +142,103 @@ exports.updateTicket = async (req, res) => {
       priority: req.body.priority || ticket.priority,
       status: req.body.status || ticket.status,
       desk_id: req.body.desk_id || ticket.desk_id,
-      assigned_to: req.body.assigned_to || ticket.assigned_to
+      assigned_to_user_id: req.body.assigned_to_user_id || req.body.assigned_to || ticket.assigned_to_user_id
     });
     
     // Create internal note about the update if requested
-    if (req.body.add_internal_note) {
+    if (req.body.add_internal_note || statusChangingToClosed) {
       await Message.create({
         ticket_id: req.params.id,
         sender_id: req.userId,
-        content: `Ticket updated: ${req.body.update_note || 'Status changed to ' + req.body.status}`,
+        content: req.body.update_note || `Ticket status changed to ${req.body.status || ticket.status}`,
         is_internal: true
       });
+    }
+    
+    // Send feedback email if ticket is being closed
+    if (statusChangingToClosed) {
+      try {
+        console.log(`Ticket ${ticket.id} status changed to closed, sending feedback email`);
+        
+        // Get the most recent customer message to send feedback email to
+        const { data: recentMessages, error: messagesError } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('ticket_id', ticket.id)
+          .eq('direction', 'incoming')
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        if (messagesError) {
+          console.error('Error fetching recent messages:', messagesError);
+        } else if (recentMessages && recentMessages.length > 0) {
+          const recentMessage = recentMessages[0];
+          
+          console.log(`Found recent message with ID ${recentMessage.microsoft_message_id || recentMessage.id}`);
+          
+          // Use the emailController directly to send the feedback email with proper threading
+          // This calls the same code path as the frontend "resolve" button
+          const mockReq = {
+            params: {
+              emailId: recentMessage.microsoft_message_id || recentMessage.id
+            },
+            query: {
+              desk_id: ticket.desk_id
+            },
+            body: {}
+          };
+          
+          const mockRes = {
+            status: (code) => ({
+              json: (data) => {
+                console.log(`Feedback email response [${code}]:`, data);
+              }
+            })
+          };
+          
+          // Call the resolveTicket method from emailController
+          await emailController.resolveTicket(mockReq, mockRes);
+          console.log('Feedback email sent using resolveTicket controller');
+        } else {
+          console.log('No recent messages found to send feedback email for ticket', ticket.id);
+          
+          // Fallback to basic email if we have customer contact info
+          if (ticket.from_address) {
+            console.log(`Sending basic feedback email to ${ticket.from_address}`);
+            
+            // Get desk for email settings
+            const desk = await Desk.findById(ticket.desk_id);
+            
+            if (!desk) {
+              console.error(`Cannot send feedback email: Desk ${ticket.desk_id} not found`);
+            } else {
+              // Initialize email service with desk settings
+              const emailService = new EmailService(desk);
+              
+              // Initialize the email service (required before sending)
+              await emailService.init();
+              
+              // Send the feedback email
+              await emailService.sendEmail({
+                to: ticket.from_address,
+                subject: `Your ticket #${ticket.user_ticket_id || ticket.id} has been resolved`,
+                body: `
+                  <p>Hello ${ticket.from_name || ''},</p>
+                  <p>Your support ticket regarding "${ticket.subject}" has been resolved and closed.</p>
+                  <p>We would appreciate your feedback on your support experience.</p>
+                  <p>Thank you for using our helpdesk service!</p>
+                `,
+                isHtml: true
+              });
+              
+              console.log(`Feedback email sent successfully to ${ticket.from_address}`);
+            }
+          }
+        }
+      } catch (emailError) {
+        // Log error but don't fail the request
+        console.error('Error sending feedback email:', emailError);
+      }
     }
     
     res.status(200).json({
@@ -138,6 +246,7 @@ exports.updateTicket = async (req, res) => {
       ticket: updatedTicket
     });
   } catch (error) {
+    console.error('Error in updateTicket:', error);
     res.status(500).json({ 
       message: 'Error updating ticket',
       error: error.message 
@@ -222,6 +331,311 @@ exports.deleteTicket = async (req, res) => {
       message: 'Error deleting ticket',
       error: error.message 
     });
+  }
+};
+
+// Request sending a feedback email for a ticket
+exports.requestTicketFeedback = async (req, res) => {
+  const { ticketId } = req.params;
+  // Use the API_URL or BACKEND_URL if available, otherwise NODE_ENV to determine URL
+  let baseUrl = process.env.API_URL || process.env.BACKEND_URL || process.env.APP_BASE_URL;
+  
+  // If no environment variables are set, use appropriate default based on environment
+  if (!baseUrl) {
+    baseUrl = process.env.NODE_ENV === 'production' 
+      ? 'https://api.helpdesk.channelplay.in'  // Production URL
+      : 'http://localhost:3001';              // Development URL
+  }
+  
+  const baseFeedbackUrl = baseUrl + '/api/tickets/feedback/submit';
+
+  try {
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ message: 'Ticket not found' });
+    }
+
+    if (!ticket.desk_id) {
+        console.error(`Cannot send feedback email: Ticket ${ticketId} has no desk_id.`);
+        return res.status(400).json({ message: 'Ticket is not associated with a desk, cannot determine email settings.' });
+    }
+    
+    const desk = await Desk.findById(ticket.desk_id);
+    if (!desk) {
+        console.error(`Cannot send feedback email: Desk ${ticket.desk_id} not found for ticket ${ticketId}.`);
+        return res.status(404).json({ message: `Desk configuration not found for ticket's desk.` });
+    }
+
+    const feedbackToken = ticket.feedback_token || uuidv4();
+    const ticketIdForLink = ticket.id; // Use the UUID for the link
+    const ticketDisplayIdForText = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+
+    await Ticket.update(ticketId, {
+      feedback_token: feedbackToken,
+      feedback_requested_at: new Date(),
+      feedback_submitted_at: null,
+      feedback_rating: null,
+      feedback_comment: null
+    });
+
+    const customerEmail = ticket.from_address;
+    const customerName = ticket.from_name || 'Valued Customer';
+
+    if (!customerEmail) {
+      console.error(`Cannot send feedback email for ticket ${ticketId}: No customer email (from_address) found.`);
+      return res.status(400).json({ message: 'Customer email not found for this ticket.' });
+    }
+
+    const emailHtmlContent = generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdForText, ticketIdForLink, baseFeedbackUrl);
+    const emailSubject = `Tell us about your recent support experience (Ticket #${ticketDisplayIdForText})`;
+
+    const emailServiceInstance = new EmailService(desk);
+    await emailServiceInstance.init();
+
+    await emailServiceInstance.sendEmail({
+      to: customerEmail,
+      subject: emailSubject,
+      body: emailHtmlContent,
+      ticketId: ticketId
+    });
+
+    console.log(`Feedback email requested successfully for ticket ${ticketId} to ${customerEmail}. Token: ${feedbackToken}`);
+    res.status(200).json({ message: 'Feedback email request processed successfully.' });
+
+  } catch (error) {
+    console.error(`Error in requestTicketFeedback for ticket ${ticketId}:`, error);
+    res.status(500).json({ message: 'Error processing feedback email request.', error: error.message });
+  }
+};
+
+// Submit feedback (handles clicks from email links)
+exports.submitFeedback = async (req, res) => {
+  const { token, rating, ticket_id: ticketIdFromLink } = req.query;
+
+  if (!token || !rating || !ticketIdFromLink) {
+    return res.status(400).send('Missing feedback parameters (token, rating, or ticket_id).');
+  }
+
+  const parsedRating = parseInt(rating, 10);
+  if (isNaN(parsedRating) || parsedRating < 1 || parsedRating > 10) {
+    return res.status(400).send('Invalid rating value. Must be a number between 1 and 10.');
+  }
+
+  try {
+    const { data: tickets, error: findError } = await supabase
+      .from('tickets')
+      .select('*')
+      .eq('feedback_token', token)
+      .eq('id', ticketIdFromLink) // Assuming ticket_id in link is the main UUID ticket.id
+      .limit(1);
+
+    if (findError) {
+      console.error('Error finding ticket by feedback token:', findError);
+      return res.status(500).send('Error processing your feedback. Please try again later.');
+    }
+
+    const ticket = tickets && tickets.length > 0 ? tickets[0] : null;
+
+    if (!ticket) {
+      console.warn(`Feedback submission attempt with invalid token or ticket_id. Token: ${token}, TicketID from link: ${ticketIdFromLink}`);
+      return res.status(404).send('Feedback link is invalid or has expired. Please contact support if you believe this is an error.');
+    }
+
+    if (ticket.feedback_submitted_at) {
+      const displayId = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+      console.log(`Feedback already submitted for ticket ${ticket.id} at ${ticket.feedback_submitted_at}.`);
+      return res.send(
+        `<html><body>
+          <h1>Thank You!</h1>
+          <p>Feedback for ticket #${displayId} has already been submitted on ${new Date(ticket.feedback_submitted_at).toLocaleString()}.</p>
+          <p>If you need further assistance, please contact support.</p>
+        </body></html>`
+      );
+    }
+    
+    const { error: updateError } = await supabase
+      .from('tickets')
+      .update({
+        feedback_rating: parsedRating,
+        feedback_submitted_at: new Date(),
+      })
+      .eq('id', ticket.id);
+
+    if (updateError) {
+      console.error('Error updating ticket with feedback:', updateError);
+      return res.status(500).send('Error saving your feedback. Please try again later.');
+    }
+    const displayId = ticket.user_ticket_id ? String(ticket.user_ticket_id) : ticket.id;
+    console.log(`Feedback submitted successfully for ticket ${ticket.id}: Rating ${parsedRating}`);
+    
+    // Determine color and emoji based on rating
+    let color = '#3498db'; // Default blue
+    let emoji = '🙂';
+    let gradientColors = 'linear-gradient(135deg, #3498db, #9b59b6)';
+    
+    if (parsedRating >= 9) {
+      color = '#1e8449'; // Dark green
+      emoji = '😍';
+      gradientColors = 'linear-gradient(135deg, #2ecc71, #27ae60)';
+    } else if (parsedRating >= 7) {
+      color = '#2ecc71'; // Green
+      emoji = '😊';
+      gradientColors = 'linear-gradient(135deg, #2ecc71, #3498db)';
+    } else if (parsedRating >= 5) {
+      color = '#3498db'; // Blue
+      emoji = '🙂';
+      gradientColors = 'linear-gradient(135deg, #3498db, #9b59b6)';
+    } else if (parsedRating >= 3) {
+      color = '#e67e22'; // Orange
+      emoji = '😕';
+      gradientColors = 'linear-gradient(135deg, #e67e22, #f39c12)';
+    } else {
+      color = '#e74c3c'; // Red
+      emoji = '😞';
+      gradientColors = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+    }
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Thank You For Your Feedback</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <style>
+        body {
+          font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          text-align: center;
+          margin: 0;
+          padding: 0;
+          background: ${gradientColors || '#f5f5f7'};
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+          transition: background 0.5s ease;
+        }
+        .card-container {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          width: 100%;
+          padding: 20px;
+          box-sizing: border-box;
+        }
+        .container {
+          background-color: white;
+          border-radius: 18px;
+          box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+          padding: 40px;
+          max-width: 500px;
+          width: 100%;
+          margin: 0 auto;
+          position: relative;
+          overflow: hidden;
+        }
+        .container:before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 6px;
+          background: ${color};
+        }
+        h1 {
+          color: #333;
+          font-size: 32px;
+          margin-bottom: 15px;
+          font-weight: 700;
+        }
+        .rating-container {
+          padding: 20px 0;
+        }
+        .emoji {
+          font-size: 68px;
+          margin: 10px 0;
+          display: block;
+          line-height: 1;
+        }
+        .rating-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 100px;
+          height: 100px;
+          border-radius: 50%;
+          background: ${gradientColors || color};
+          margin: 10px auto;
+          color: white;
+          font-size: 42px;
+          font-weight: bold;
+          box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        .rating-text {
+          font-size: 24px;
+          font-weight: 600;
+          margin: 15px 0;
+          color: ${color};
+        }
+        .message {
+          background-color: #f9f9f9;
+          border-radius: 12px;
+          padding: 20px;
+          margin: 20px 0;
+        }
+        p {
+          color: #555;
+          line-height: 1.6;
+          font-size: 16px;
+          margin: 8px 0;
+        }
+        .close-btn {
+          display: inline-block;
+          margin-top: 20px;
+          padding: 12px 24px;
+          background-color: ${color};
+          color: white;
+          border: none;
+          border-radius: 6px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: transform 0.2s, background-color 0.2s;
+          text-decoration: none;
+          font-size: 16px;
+        }
+        .close-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+      </style>
+    </head>
+    <body>
+      <div class="card-container">
+        <div class="container">
+          <h1>Thank You For Your Feedback!</h1>
+          
+          <div class="rating-container">
+            <span class="emoji">${emoji}</span>
+            <div class="rating-badge">${parsedRating}</div>
+            <div class="rating-text">${parsedRating >= 8 ? 'Excellent!' : parsedRating >= 5 ? 'Thank You' : 'We\'ll Improve'}</div>
+          </div>
+          
+          <div class="message">
+            <p>Your rating of <strong>${parsedRating}</strong> for ticket #${displayId} has been recorded.</p>
+            <p>We appreciate you taking the time to help us improve our service.</p>
+          </div>
+          
+          <a href="#" class="close-btn" onclick="window.close(); return false;">Close Window</a>
+        </div>
+      </div>
+    </body>
+    </html>
+    `);
+
+  } catch (error) {
+    console.error('Error in submitFeedback:', error);
+    res.status(500).send('An unexpected error occurred. Please try again later.');
   }
 };
 
