@@ -68,6 +68,19 @@ exports.getTickets = async (req, res) => {
       query = query.eq('assigned_to', req.query.assigned_to);
     }
     
+    // Role-based filtering: agents can only see tickets assigned to them
+    // While admins/supervisors can see all tickets
+    const userId = req.userId;
+    const userRole = req.userRole;
+    
+    console.log(`User ${userId} with role ${userRole} requesting tickets`);
+    
+    // If the user is not an admin or supervisor, filter by assigned_to_user_id
+    if (userRole !== 'admin' && userRole !== 'supervisor') {
+      console.log(`Filtering tickets for agent ${userId}`);
+      query = query.eq('assigned_to_user_id', userId);
+    }
+    
     // Execute the query
     const { data, error } = await query;
     
@@ -75,6 +88,7 @@ exports.getTickets = async (req, res) => {
       throw new Error(`Error finding tickets: ${error.message}`);
     }
     
+    console.log(`Found ${data?.length || 0} tickets for user ${userId}`);
     res.status(200).json({ data });
   } catch (error) {
     console.error('Error in getTickets:', error);
@@ -323,7 +337,17 @@ exports.deleteTicket = async (req, res) => {
 // Request sending a feedback email for a ticket
 exports.requestTicketFeedback = async (req, res) => {
   const { ticketId } = req.params;
-  const baseFeedbackUrl = (process.env.APP_BASE_URL || 'http://localhost:3001') + '/api/tickets/feedback/submit'; // Ensure your frontend/API base URL is correct, 3001 for backend typically
+  // Use the API_URL or BACKEND_URL if available, otherwise NODE_ENV to determine URL
+  let baseUrl = process.env.API_URL || process.env.BACKEND_URL || process.env.APP_BASE_URL;
+  
+  // If no environment variables are set, use appropriate default based on environment
+  if (!baseUrl) {
+    baseUrl = process.env.NODE_ENV === 'production' 
+      ? 'https://api.helpdesk.channelplay.in'  // Production URL
+      : 'http://localhost:3001';              // Development URL
+  }
+  
+  const baseFeedbackUrl = baseUrl + '/api/tickets/feedback/submit';
 
   try {
     const ticket = await Ticket.findById(ticketId);

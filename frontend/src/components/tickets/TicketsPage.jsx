@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../../utils/supabaseClient';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
-  Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip, Pagination
+  Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip, Pagination, Tab, Nav, Tabs, Modal
 } from 'react-bootstrap';
 import { 
-  FaEnvelope, FaTicketAlt, FaUser, FaUserCog, FaComments, 
+  FaEnvelope, FaTicketAlt, FaUser, FaUserCog, FaComments, FaComment,
   FaInbox, FaHistory, FaSyncAlt, FaFilter, FaSort,
   FaSmile, FaReply, FaCheck, FaExclamationCircle, FaBell, 
   FaHeadset, FaPaperPlane, FaCheckCircle, FaInfoCircle, FaAngleDown, FaAngleUp,
@@ -1363,7 +1363,8 @@ const handleNewReply = useCallback((newReplyMessage) => {
 
   // Throttle ticket switching to prevent channel setup flood
   useEffect(() => {
-    const id = setTimeout(() => setDelayedTicketId(ticketId), 300);
+    // Use a longer delay to ensure previous channel cleanup completes
+    const id = setTimeout(() => setDelayedTicketId(ticketId), 500);
     return () => clearTimeout(id);
   }, [ticketId]);
 
@@ -1394,11 +1395,21 @@ const handleNewReply = useCallback((newReplyMessage) => {
         // Use a consistent, collision-resistant naming scheme (raw UUID is preferred if available)
         const channelName = `ticket_channel_${delayedTicketId}`;
 
-        // 1. Clean up previous channel if it exists and is for a different ticketId
-        if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic !== channelName) {
-          console.log(`[Supabase Realtime] Ticket ID changed. Cleaning up old channel: ${activeTicketChannelRef.current.topic}`);
-          await supabase.removeChannel(activeTicketChannelRef.current); // Added await
-          activeTicketChannelRef.current = null;
+        // 1. Clean up previous channel if it exists - always do this when setting up a new channel
+        // This ensures we don't have stale channels or multiple channels for the same ticket
+        if (activeTicketChannelRef.current) {
+          console.log(`[Supabase Realtime] Cleaning up previous ticket channel: ${activeTicketChannelRef.current.topic}`);
+          try {
+            await supabase.removeChannel(activeTicketChannelRef.current);
+          } catch (cleanupError) {
+            console.error(`[Supabase Realtime] Error removing previous channel:`, cleanupError);
+          } finally {
+            // Always null the ref even if removal had an error
+            activeTicketChannelRef.current = null;
+          }
+          
+          // Add a small delay to ensure the channel is properly cleaned up before creating a new one
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         // 2. If a channel for the current ticket already exists and is joined/joining, do nothing further.
@@ -1416,7 +1427,10 @@ const handleNewReply = useCallback((newReplyMessage) => {
         }
         
         console.log(`[Supabase Realtime] Setting up new ticket-specific channel: ${channelName} for ticket ID: ${delayedTicketId}`);
-        const newTicketChannel = supabase.channel(channelName);
+        // Use a more unique channel name to avoid conflicts, including a timestamp
+        const uniqueChannelName = `ticket_channel_${delayedTicketId}_${Date.now()}`;
+        console.log(`[Supabase Realtime] Creating unique channel: ${uniqueChannelName}`);
+        const newTicketChannel = supabase.channel(uniqueChannelName);
 
         // Attach listeners using the memoized commonMessageHandler
         newTicketChannel.on(
@@ -1453,17 +1467,40 @@ const handleNewReply = useCallback((newReplyMessage) => {
             console.warn(`[Supabase Realtime] Ticket channel ${channelName} was closed.`);
           })
           .subscribe(status => {
-            console.log(`[Supabase Realtime] Ticket channel (${channelName}) subscription status: ${status}`);
+            console.log(`[Supabase Realtime] Ticket channel (${uniqueChannelName}) subscription status: ${status}`);
+            
             if (status === 'SUBSCRIBED') {
-              console.log(`[Supabase Realtime] Successfully subscribed to ${channelName}`);
-              activeTicketChannelRef.current = newTicketChannel; // Assign the new channel to the ref on successful subscription
+              console.log(`[Supabase Realtime] Successfully subscribed to ${uniqueChannelName}`);
+              // Only set the ref if this isn't a stale subscription (check if deps changed during subscription)
+              if (delayedTicketId === ticketId) {
+                activeTicketChannelRef.current = newTicketChannel;
+              } else {
+                console.log(`[Supabase Realtime] Ticket changed during subscription process, cleaning up this channel`);
+                // We've already switched tickets, so clean up this channel
+                supabase.removeChannel(newTicketChannel).catch(err => 
+                  console.error('[Supabase Realtime] Error removing stale channel:', err)
+                );
+              }
             } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                console.error(`[Supabase Realtime] Subscription to ${channelName} failed with status: ${status}`);
-                // If this specific channel instance failed, nullify the ref to allow re-subscription attempt if deps change.
-                // Check if the current ref is indeed pointing to the channel that failed.
-                if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic === newTicketChannel.topic) {
-                  activeTicketChannelRef.current = null; 
+              console.error(`[Supabase Realtime] Subscription to ${uniqueChannelName} failed with status: ${status}`);
+              
+              // If this specific channel instance failed, nullify the ref to allow re-subscription
+              if (activeTicketChannelRef.current && activeTicketChannelRef.current.topic === newTicketChannel.topic) {
+                activeTicketChannelRef.current = null;
+                
+                // Add a retry mechanism after timeout with exponential backoff
+                if (status === 'TIMED_OUT' && delayedTicketId === ticketId) {
+                  const retryDelay = Math.random() * 1000 + 500; // Random delay between 500-1500ms
+                  console.log(`[Supabase Realtime] Will retry subscription in ${retryDelay}ms`);
+                  setTimeout(() => {
+                    if (delayedTicketId === ticketId) { // Only retry if we're still on the same ticket
+                      console.log('[Supabase Realtime] Retrying channel subscription after timeout');
+                      ticketInitInProgressRef.current = false; // Reset lock to allow retry
+                      setupTicketChannel(); // Retry setup
+                    }
+                  }, retryDelay);
                 }
+              }
             }
           });
       } catch (error) {
@@ -1482,9 +1519,14 @@ const handleNewReply = useCallback((newReplyMessage) => {
       if (activeTicketChannelRef.current) {
         console.log(`[Supabase Realtime] Cleaning up ticket channel: ${activeTicketChannelRef.current.topic} (unmount or deps change)`);
         // We don't await here since this is running during cleanup
-        supabase.removeChannel(activeTicketChannelRef.current);
-        // Ensure the ref is cleared if it was pointing to the channel being removed by this cleanup
-        activeTicketChannelRef.current = null;
+        try {
+          supabase.removeChannel(activeTicketChannelRef.current);
+        } catch (error) {
+          console.error('[Supabase Realtime] Error while cleaning up channel:', error);
+        } finally {
+          // Always ensure the ref is cleared even if removal fails
+          activeTicketChannelRef.current = null;
+        }
       }
     };
   }, [supabase, delayedTicketId, conversationId, commonMessageHandler]); // Using delayedTicketId instead of ticketId
@@ -2249,9 +2291,21 @@ ${deskName}`;
                         const closedTickets = resolvedEmails;
                         // For open view, ensure we're only showing non-closed tickets
                         const openTickets = tickets.filter(ticket => ticket.status !== 'closed');
+                        
+                        // Sort helper function to ensure latest tickets appear first
+                        const sortByLatest = (tickets) => {
+                          return [...tickets].sort((a, b) => {
+                            // Use last_message_at as primary, fall back to updated_at and created_at
+                            const dateA = new Date(a.last_message_at || a.updated_at || a.created_at);
+                            const dateB = new Date(b.last_message_at || b.updated_at || b.created_at);
+                            return dateB - dateA; // Sort descending (newest first)
+                          });
+                        };
 
-                        // Use filtered results if search is active
-                        const allTicketsToDisplay = searchText.trim() ? filteredTickets : (isClosedView ? closedTickets : openTickets);
+                        // Use filtered results if search is active, and ensure they're always sorted newest first
+                        const allTicketsToDisplay = sortByLatest(
+                          searchText.trim() ? filteredTickets : (isClosedView ? closedTickets : openTickets)
+                        );
                         const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets";
 
                         // Only render the section if there are tickets to display for the current filter
@@ -2312,16 +2366,31 @@ ${deskName}`;
                                 <div className="ticket-info">
                                   <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
                                   <div>
+                                    {/* Only show status badges for important statuses (not open or closed) */}
+                                    {ticket.status !== 'open' && ticket.status !== 'closed' && (
+                                      <Badge 
+                                        bg={ticket.status === 'new' ? 'info' : 
+                                           ticket.status === 'pending' ? 'warning' : 'light'} 
+                                        pill
+                                        className="me-1"
+                                      >
+                                        {ticket.status}
+                                      </Badge>
+                                    )}
+                                    
+                                    {/* Show message count for all tickets with green background for open tickets */}
                                     <Badge 
-                                      bg={ticket.status === 'new' ? 'info' : 
-                                         ticket.status === 'open' ? 'success' : 
-                                         ticket.status === 'closed' ? 'secondary' : 
-                                         ticket.status === 'pending' ? 'warning' : 'light'} 
-                                      pill
-                                      className="me-1"
+                                      bg={ticket.status !== 'closed' ? 'success' : 'light'} 
+                                      text={ticket.status !== 'closed' ? 'white' : 'dark'} 
+                                      pill 
+                                      className="me-1 message-count-badge"
+                                      title="Number of messages in this conversation"
                                     >
-                                      {ticket.status}
+                                      <FaComment size={10} className="me-1" />
+                                      {ticket.message_count || 0}
                                     </Badge>
+                                    
+                                    {/* Removed green dot indicator as requested */}
                                     {ticket.reopened_from_closed && (
                                       <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
                                         Reopened
@@ -2330,8 +2399,12 @@ ${deskName}`;
                                   </div>
                                 </div>
                                 <div className="ticket-message">
-                                  {/* Ensure preview is a string and truncate if necessary */}
-                                  <small>{String(ticket.preview || ticket.description || ticket.subject || 'No preview available').substring(0, 100)}</small>
+                                  {/* Standardized display format - consistently show the same preview across admin/agent views */}
+                                  <small>
+                                    {ticket.from_name && ticket.subject === ticket.from_name 
+                                      ? (ticket.body_preview || ticket.body_text || 'Check ticket details') 
+                                      : (ticket.body_preview || ticket.body_text || ticket.subject || 'Check ticket details')}
+                                  </small>
                                 </div>
                               </div>
                              ))}
@@ -2717,83 +2790,98 @@ ${deskName}`;
                               {/* Show recipients information when expanded */}
                               {expandedMessages[message.id || `msg-${index}`] && (
                                 <div className="message-details mt-3 p-2 border-top">
-                                  {message.from && message.from.emailAddress && (
-                                    <div className="mb-1">
-                                      <small className="text-muted">
-                                        <strong>From: </strong>
-                                        {(() => {
+                                  {/* Always show From field if available */}
+                                  <div className="mb-1">
+                                    <small className="text-muted">
+                                      <strong>From: </strong>
+                                      {(() => {
+                                        // Different message source formats handled
+                                        if (message.from && message.from.emailAddress) {
                                           const address = message.from.emailAddress.address || 'no-email';
                                           const name = message.from.emailAddress.name || '';
                                           return name ? `${name} <${address}>` : address;
-                                        })()} 
-                                      </small>
-                                    </div>
-                                  )}
+                                        } else if (message.from_address) {
+                                          return message.from_name ? `${message.from_name} <${message.from_address}>` : message.from_address;
+                                        } else {
+                                          return message.from || message.from_name || 'Unknown sender';
+                                        }
+                                      })()}
+                                    </small>
+                                  </div>
                                   
-                                  {message.ccRecipients && message.ccRecipients.length > 0 && (
+                                  {/* Show CC field if message has CC recipients - support multiple field formats */}
+                                  {((message.ccRecipients && message.ccRecipients.length > 0) || message.cc || message.cc_recipients || message.cc_addresses) && (
                                     <div className="mb-1">
                                       <small className="text-muted">
                                         <strong>CC: </strong>
-                                        {message.ccRecipients.map((recipient, i) => {
-                                          // Case 1: Microsoft Graph API format
-                                          if (recipient && recipient.emailAddress) {
-                                            const address = recipient.emailAddress.address || '';
-                                            const name = recipient.emailAddress.name || '';
-                                            return (
-                                              <span key={i}>
-                                                {name ? `${name} <${address}>` : address}
-                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
-                                              </span>
-                                            );
+                                        {(() => {
+                                          // Determine which CC format the message uses
+                                          let ccData = [];
+                                          
+                                          if (message.ccRecipients && message.ccRecipients.length > 0) {
+                                            ccData = message.ccRecipients;
+                                          } else if (message.cc && Array.isArray(message.cc)) {
+                                            ccData = message.cc;
+                                          } else if (message.cc && typeof message.cc === 'string') {
+                                            ccData = message.cc.split(',').map(cc => cc.trim());
+                                          } else if (message.cc_recipients && Array.isArray(message.cc_recipients)) {
+                                            ccData = message.cc_recipients;
+                                          } else if (message.cc_addresses && Array.isArray(message.cc_addresses)) {
+                                            ccData = message.cc_addresses;
+                                          } else if (message.cc_recipients && typeof message.cc_recipients === 'string') {
+                                            ccData = message.cc_recipients.split(',').map(cc => cc.trim());
+                                          } else if (message.cc_addresses && typeof message.cc_addresses === 'string') {
+                                            ccData = message.cc_addresses.split(',').map(cc => cc.trim());
                                           }
                                           
-                                          // Case 2: Simple string format
-                                          else if (typeof recipient === 'string') {
-                                            return (
-                                              <span key={i}>
-                                                {recipient}
-                                                {i < message.ccRecipients.length - 1 ? ', ' : ''}
-                                              </span>
-                                            );
-                                          }
-                                          
-                                          // Case 3: Simple object format
-                                          else if (recipient && typeof recipient === 'object') {
-                                            // Try to find address in common property names
-                                            const address = recipient.address || recipient.email || recipient.mail || '';
-                                            const name = recipient.name || recipient.displayName || '';
-                                            
-                                            if (address) {
+                                          return ccData.map((recipient, i) => {
+                                            // Case 1: Microsoft Graph API format
+                                            if (recipient && recipient.emailAddress) {
+                                              const address = recipient.emailAddress.address || '';
+                                              const name = recipient.emailAddress.name || '';
                                               return (
                                                 <span key={i}>
                                                   {name ? `${name} <${address}>` : address}
-                                                  {i < message.ccRecipients.length - 1 ? ', ' : ''}
+                                                  {i < ccData.length - 1 ? ', ' : ''}
                                                 </span>
                                               );
                                             }
-                                          }
-                                          
-                                          // Final fallback
-                                          return <span key={i}>{JSON.stringify(recipient).replace(/[{}"\']/g, '')}{i < message.ccRecipients.length - 1 ? ', ' : ''}</span>;
-                                        })}
-                                      </small>
-                                    </div>
-                                  )}
-                                  
-                                  {message.receivedDateTime && (
-                                    <div>
-                                      <small className="text-muted">
-                                        <strong>Received: </strong>
-                                        {(() => {
-                                          const dateObj = new Date(message.receivedDateTime);
-                                          // Check if hours, minutes, seconds are all zero
-                                          return (dateObj.getHours() === 0 && dateObj.getMinutes() === 0 && dateObj.getSeconds() === 0) 
-                                            ? new Date().toLocaleString() 
-                                            : dateObj.toLocaleString();
+                                            
+                                            // Case 2: Simple string format
+                                            else if (typeof recipient === 'string') {
+                                              return (
+                                                <span key={i}>
+                                                  {recipient}
+                                                  {i < ccData.length - 1 ? ', ' : ''}
+                                                </span>
+                                              );
+                                            }
+                                            
+                                            // Case 3: Simple object format
+                                            else if (recipient && typeof recipient === 'object') {
+                                              // Try to find address in common property names
+                                              const address = recipient.address || recipient.email || recipient.mail || '';
+                                              const name = recipient.name || recipient.displayName || '';
+                                              
+                                              if (address) {
+                                                return (
+                                                  <span key={i}>
+                                                    {name ? `${name} <${address}>` : address}
+                                                    {i < ccData.length - 1 ? ', ' : ''}
+                                                  </span>
+                                                );
+                                              }
+                                            }
+                                            
+                                            // Final fallback
+                                            return <span key={i}>{JSON.stringify(recipient).replace(/[{}"\']/g, '')}{i < ccData.length - 1 ? ', ' : ''}</span>;
+                                          });
                                         })()}
                                       </small>
                                     </div>
                                   )}
+                                  
+                                  {/* Received field removed as requested */}
                                 </div>
                               )}
                             </div>
