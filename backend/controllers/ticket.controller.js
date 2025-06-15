@@ -343,7 +343,7 @@ exports.requestTicketFeedback = async (req, res) => {
   // If no environment variables are set, use appropriate default based on environment
   if (!baseUrl) {
     baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://api.helpdesk.channelplay.in'  // Production URL
+      ? 'https://api.channelplay.in'  // Production URL
       : 'http://localhost:3001';              // Development URL
   }
   
