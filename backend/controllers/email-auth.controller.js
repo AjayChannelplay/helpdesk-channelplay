@@ -123,11 +123,11 @@ exports.handleMicrosoftCallback = async (req, res) => {
       return res.status(404).json({ message: 'Integration not found for this desk' });
     }
     
-    // Set up redirect URI - using a default since there's no redirect_uri column in the schema
-    const redirectUri = DEFAULT_REDIRECT_URI;
+    // Set up redirect URI - use the one from environment variables
+    const redirectUri = process.env.MICROSOFT_REDIRECT_URI;
     
     // Exchange the authorization code for tokens with exact match of registered redirect URI
-    console.log('Exchanging code for tokens with redirect URI:', redirectUri);
+    console.log('Exchanging code for tokens with redirect URI from env:', redirectUri); // Log the URI from env
     console.log('Using client_id:', integration.client_id);
     
     let tokenRes;
