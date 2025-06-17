@@ -39,8 +39,11 @@ const TicketService = {
   // Update ticket
   updateTicket: async (id, ticketData) => {
     try {
+      // Ensure conversation_id is always sent if present in ticketData
+      if (!ticketData.conversation_id && ticketData.conversationId) {
+        ticketData.conversation_id = ticketData.conversationId;
+      }
       const response = await API.put(`/tickets/${id}`, ticketData);
-      
       return response.data;
     } catch (error) {
       throw error.response ? error.response.data : error.message;
