@@ -1830,7 +1830,7 @@ ${deskName}`;
       setAttachments([]);
       
       // Refresh the conversation to show the new reply.
-      // fetchConversationData(selectedTicket, true); // Temporarily commented out for Realtime test
+      await fetchConversationData(selectedTicket); // Always fetch latest conversation from backend
 
       // Also mark the message as read if it's a direct email.
       if (selectedTicket.id.toString().startsWith('email-')) {
