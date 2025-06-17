@@ -86,6 +86,7 @@ const TicketsPage = () => {
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [conversation, setConversation] = useState([]);
   const [replyText, setReplyText] = useState('');
+  const [ccRecipients, setCcRecipients] = useState('');
   
   // Auto-refresh settings - always enabled by default for conversations (like ticket list)
   const [autoRefreshEnabled] = useState(true); // Removed setter to keep it always enabled
@@ -1814,6 +1815,9 @@ ${deskName}`;
       formData.append('emailId', emailId);
       formData.append('desk_id', selectedDeskId);
       formData.append('content', emailContent); // Use the content with signature
+      if (ccRecipients && ccRecipients.trim().length > 0) {
+        formData.append('cc', ccRecipients);
+      }
       formData.append('sender_name', senderName);
       formData.append('sender_email', senderEmail);
       attachments.forEach(file => {
@@ -1827,6 +1831,7 @@ ${deskName}`;
       // Step 4: Update the UI and state.
       setSuccess('Reply sent successfully!');
       setReplyText('');
+      setCcRecipients('');
       setAttachments([]);
       
       // Refresh the conversation to show the new reply.
@@ -2901,23 +2906,76 @@ ${deskName}`;
               {(emailStatusFilter !== 'closed' && (selectedTicket.status !== 'closed')) && (
                 <Card.Footer>
                   <Form>
-                    <Form.Group>
-                      {/* CC field removed */}
-                      <InputGroup>
-                        <Form.Control 
-                          as="textarea" 
-                          rows={3} 
-                          placeholder="Type your reply here..."
-                          value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
-                          disabled={sending}
+                    <Form.Group controlId="ccInput" className="mb-2">
+                      <Form.Label>CC</Form.Label>
+                      <Form.Control
+                        type="text"
+                        value={ccRecipients}
+                        onChange={e => setCcRecipients(e.target.value)}
+                        placeholder="Add CC (comma-separated emails)"
+                        disabled={sending}
+                      />
+                    </Form.Group>
+                    <Form.Group controlId="replyTextarea" className="mb-2">
+                      <Form.Label>Reply</Form.Label>
+                      <Form.Control
+                        as="textarea"
+                        rows={3}
+                        value={replyText}
+                        onChange={e => setReplyText(e.target.value)}
+                        placeholder="Type your reply here..."
+                        disabled={sending}
+                      />
+                    </Form.Group>
+                    {attachments.length > 0 && (
+                      <div className="mt-2 mb-2">
+                        <small className="text-muted d-block mb-1">Attachments:</small>
+                        <ListGroup variant="flush" className="attachment-list">
+                          {attachments.map((file, index) => (
+                            <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
+                              <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
+                                <FaPaperclip size={12} className="me-1 flex-shrink-0" />
+                                {file.name} ({ (file.size / 1024).toFixed(1) } KB)
+                              </small>
+                              <Button 
+                                variant="link" 
+                                size="sm" 
+                                className="p-0 text-danger ms-2 flex-shrink-0" 
+                                onClick={() => handleRemoveAttachment(file.name)} 
+                                aria-label={`Remove ${file.name}`}
+                              >
+                                &times;
+                              </Button>
+                            </ListGroup.Item>
+                          ))}
+                        </ListGroup>
+                      </div>
+                    )}
+                    <div className="d-flex justify-content-between align-items-center mt-2">
+                      <div>
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={<Tooltip>Attach files</Tooltip>}
+                        >
+                          <Button variant="link" className="text-muted p-0 me-2" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+                            <FaPaperclip /> Add attachments
+                          </Button>
+                        </OverlayTrigger>
+                        <input 
+                          type="file" 
+                          multiple 
+                          ref={fileInputRef} 
+                          onChange={handleFileChange} 
+                          style={{ display: 'none' }} 
                         />
-                      </InputGroup>
-                      {attachments.length > 0 && (
-                        <div className="mt-2 mb-2">
-                          <small className="text-muted d-block mb-1">Attachments:</small>
-                          <ListGroup variant="flush" className="attachment-list">
-                            {attachments.map((file, index) => (
+                      </div>
+                      <div>
+                        {selectedTicket.isEmail ? (
+                          <Button 
+                            variant="info"
+                            className="me-2"
+                            onClick={() => resolveEmail(selectedTicket.emailId)}
+                            disabled={sending}
                               <ListGroup.Item key={index} className="d-flex justify-content-between align-items-center p-1 border-0 bg-light rounded mb-1">
                                 <small className="text-truncate" style={{ maxWidth: 'calc(100% - 30px)' }}>
                                   <FaPaperclip size={12} className="me-1 flex-shrink-0" />
