@@ -142,7 +142,8 @@ exports.updateTicket = async (req, res) => {
       priority: req.body.priority || ticket.priority,
       status: req.body.status || ticket.status,
       desk_id: req.body.desk_id || ticket.desk_id,
-      assigned_to_user_id: req.body.assigned_to_user_id || req.body.assigned_to || ticket.assigned_to_user_id
+      assigned_to_user_id: req.body.assigned_to_user_id || req.body.assigned_to || ticket.assigned_to_user_id,
+      conversation_id: ticket.conversation_id // Ensure conversation_id is preserved
     });
     
     // Create internal note about the update if requested
@@ -151,7 +152,8 @@ exports.updateTicket = async (req, res) => {
         ticket_id: req.params.id,
         sender_id: req.userId,
         content: req.body.update_note || `Ticket status changed to ${req.body.status || ticket.status}`,
-        is_internal: true
+        is_internal: true,
+        microsoft_conversation_id: ticket.conversation_id // Ensure internal note is linked to the ticket's conversation
       });
     }
     
@@ -159,7 +161,7 @@ exports.updateTicket = async (req, res) => {
     if (statusChangingToClosed) {
       try {
         console.log(`Ticket ${ticket.id} status changed to closed, sending feedback email`);
-        
+
         // Get the most recent customer message to send feedback email to
         const { data: recentMessages, error: messagesError } = await supabase
           .from('messages')
@@ -168,16 +170,15 @@ exports.updateTicket = async (req, res) => {
           .eq('direction', 'incoming')
           .order('created_at', { ascending: false })
           .limit(1);
-          
+
         if (messagesError) {
           console.error('Error fetching recent messages:', messagesError);
         } else if (recentMessages && recentMessages.length > 0) {
           const recentMessage = recentMessages[0];
-          
+
           console.log(`Found recent message with ID ${recentMessage.microsoft_message_id || recentMessage.id}`);
-          
+
           // Use the emailController directly to send the feedback email with proper threading
-          // This calls the same code path as the frontend "resolve" button
           const mockReq = {
             params: {
               emailId: recentMessage.microsoft_message_id || recentMessage.id
@@ -187,7 +188,7 @@ exports.updateTicket = async (req, res) => {
             },
             body: {}
           };
-          
+
           const mockRes = {
             status: (code) => ({
               json: (data) => {
@@ -195,45 +196,13 @@ exports.updateTicket = async (req, res) => {
               }
             })
           };
-          
+
           // Call the resolveTicket method from emailController
           await emailController.resolveTicket(mockReq, mockRes);
           console.log('Feedback email sent using resolveTicket controller');
         } else {
-          console.log('No recent messages found to send feedback email for ticket', ticket.id);
-          
-          // Fallback to basic email if we have customer contact info
-          if (ticket.from_address) {
-            console.log(`Sending basic feedback email to ${ticket.from_address}`);
-            
-            // Get desk for email settings
-            const desk = await Desk.findById(ticket.desk_id);
-            
-            if (!desk) {
-              console.error(`Cannot send feedback email: Desk ${ticket.desk_id} not found`);
-            } else {
-              // Initialize email service with desk settings
-              const emailService = new EmailService(desk);
-              
-              // Initialize the email service (required before sending)
-              await emailService.init();
-              
-              // Send the feedback email
-              await emailService.sendEmail({
-                to: ticket.from_address,
-                subject: `Your ticket #${ticket.user_ticket_id || ticket.id} has been resolved`,
-                body: `
-                  <p>Hello ${ticket.from_name || ''},</p>
-                  <p>Your support ticket regarding "${ticket.subject}" has been resolved and closed.</p>
-                  <p>We would appreciate your feedback on your support experience.</p>
-                  <p>Thank you for using our helpdesk service!</p>
-                `,
-                isHtml: true
-              });
-              
-              console.log(`Feedback email sent successfully to ${ticket.from_address}`);
-            }
-          }
+          console.log('No recent messages found to send a threaded feedback email for ticket', ticket.id);
+          // Fallback logic to send a separate email has been removed to prevent duplicates.
         }
       } catch (emailError) {
         // Log error but don't fail the request

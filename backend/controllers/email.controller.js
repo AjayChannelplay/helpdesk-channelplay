@@ -365,137 +365,223 @@ exports.resolveTicket = async (req, res) => {
     const originalMessage = messageResponse.data;
     
     // Create the email content with numerical rating options directly in email
-    const resolutionContent = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; max-width: 600px;">
-        <h2 style="color: #444; font-weight: 600;">Your ticket has been resolved</h2>
-        <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
-        <p>We'd love to hear about your experience. How satisfied were you with our service?</p>
+    // const resolutionContent = `
+    //   <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; max-width: 600px;">
+    //     <h2 style="color: #444; font-weight: 600;">Your ticket has been resolved</h2>
+    //     <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
+    //     <p>We'd love to hear about your experience. How satisfied were you with our service?</p>
         
-        <div style="margin: 30px 0; text-align: center;">
-          <p style="font-weight: 500; font-size: 18px; margin-bottom: 20px;">Click on a number to rate your satisfaction level:</p>
+    //     <div style="margin: 30px 0; text-align: center;">
+    //       <p style="font-weight: 500; font-size: 18px; margin-bottom: 20px;">Click on a number to rate your satisfaction level:</p>
           
-          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 550px; margin: 0 auto;">
+    //       <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 550px; margin: 0 auto;">
+    //         <tr>
+    //           <td align="center" style="padding-bottom: 15px;">
+    //             <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
+    //               <tr>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff5a65; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">1</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff7a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">2</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff9a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">3</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ffba7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">4</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #f3b941; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">5</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //               </tr>
+    //             </table>
+    //           </td>
+    //         </tr>
+    //         <tr>
+    //           <td align="center">
+    //             <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
+    //               <tr>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #e0c54d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">6</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #c8cf58; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">7</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #a3d063; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">8</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #76ca6d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">9</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //                 <td style="padding: 0 7px;">
+    //                   <table cellspacing="0" cellpadding="0" border="0">
+    //                     <tr>
+    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #26cb7c; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
+    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 16px; line-height: 50px; text-align: center;">10</a>
+    //                       </td>
+    //                     </tr>
+    //                   </table>
+    //                 </td>
+    //               </tr>
+    //             </table>
+    //           </td>
+    //         </tr>
+    //       </table>
+          
+    //       <div style="position: relative; width: 100%; margin: 15px auto 5px;">
+    //         <div style="display: flex; justify-content: space-between; width: 92%; max-width: 550px; margin: 0 auto;">
+    //           <span style="color: #666; font-size: 14px; text-align: left;">Very Dissatisfied</span>
+    //           <span style="color: #666; font-size: 14px; text-align: right;">Very Satisfied</span>
+    //         </div>
+    //       </div>
+    //     </div>
+        
+    //     <p>If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
+    //     <p>Best regards,<br>Support Team</p>
+    //   </div>
+    // `;
+    const resolutionContent = 
+    `<!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="UTF-8">
+    <title>Ticket Resolved</title>
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; background-color: #f5f5f5;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+      <h2 style="color: #444; font-weight: 600; margin-top: 0;">Your ticket has been resolved</h2>
+      <p style="color: #666;">Thank you for contacting our support team! Your issue has been marked as resolved.</p>
+      <p style="color: #666;">We'd love to hear about your experience. How satisfied were you with our service?</p>
+      
+      <div style="margin: 30px 0;">
+        <div style="text-align: center; margin-bottom: 10px;">
+          <h3 style="color: #333; margin: 0; font-size: 20px;">How satisfied are you with our service?</h3>
+        </div>
+        <div style="text-align: center; margin-bottom: 20px;">
+          <p style="color: #666; font-size: 14px; margin: 0;">Click on a number to rate your satisfaction level</p>
+        </div>
+        
+        <!-- Scale buttons -->
+        <div style="margin: 25px 0;">
+          <div style="display: flex; justify-content: space-between; max-width: 100%; margin: 0 auto; width: fit-content;">
+            <div style="display: flex; gap: 12px;"> <!-- Increased gap between buttons -->
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;" 
+                 onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">1</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#e67e22'; this.style.borderColor='#e67e22'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">2</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#f39c12'; this.style.borderColor='#f39c12'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">3</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">4</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#3498db'; this.style.borderColor='#3498db'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">5</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#3498db'; this.style.borderColor='#3498db'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">6</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#9b59b6'; this.style.borderColor='#9b59b6'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">7</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">8</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#27ae60'; this.style.borderColor='#27ae60'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">9</a>
+              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" 
+                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
+                 onmouseover="this.style.backgroundColor='#1e8449'; this.style.borderColor='#1e8449'; this.style.color='white';"
+                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">10</a>
+            </div>
+          </div>
+          
+          <!-- Labels below scale -->
+          <table border="0" cellpadding="0" cellspacing="0" width="458" style="width: 458px; margin: 10px auto 0;">
             <tr>
-              <td align="center" style="padding-bottom: 15px;">
-                <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
-                  <tr>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff5a65; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">1</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff7a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">2</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff9a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">3</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ffba7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">4</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #f3b941; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">5</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
+              <td align="left" style="font-size: 13px; color: #666; font-weight: 500;">
+                Very Dissatisfied
               </td>
-            </tr>
-            <tr>
-              <td align="center">
-                <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
-                  <tr>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #e0c54d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">6</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #c8cf58; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">7</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #a3d063; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">8</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #76ca6d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">9</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                    <td style="padding: 0 7px;">
-                      <table cellspacing="0" cellpadding="0" border="0">
-                        <tr>
-                          <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #26cb7c; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-                            <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 16px; line-height: 50px; text-align: center;">10</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
+              <td align="right" style="font-size: 13px; color: #666; font-weight: 500;">
+                Very Satisfied
               </td>
             </tr>
           </table>
-          
-          <div style="position: relative; width: 100%; margin: 15px auto 5px;">
-            <div style="display: flex; justify-content: space-between; width: 92%; max-width: 550px; margin: 0 auto;">
-              <span style="color: #666; font-size: 14px; text-align: left;">Very Dissatisfied</span>
-              <span style="color: #666; font-size: 14px; text-align: right;">Very Satisfied</span>
-            </div>
-          </div>
         </div>
-        
-        <p>If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
-        <p>Best regards,<br>Support Team</p>
       </div>
-    `;
-    
+      
+      <p style="color: #666;">If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
+      <p style="color: #666;">Best regards,<br>Support Team</p>
+    </div>
+    </body>
+    </html>`;
     // Calculate recipients from original message
     const calculatedReplyToRecipients = originalMessage.from ? [originalMessage.from] : (originalMessage.sender ? [originalMessage.sender] : []);
     
@@ -519,81 +605,8 @@ exports.resolveTicket = async (req, res) => {
       }
     );
     
-    // Wait a moment for the resolution email to be processed by Microsoft Graph API
-    console.log(`Waiting briefly for the resolution email to be processed...`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Now update message statuses in the database, AFTER sending the resolution email
-    // This ensures the feedback/resolution email is also included in database fetch operations
-    try {
-      if (!originalMessage.conversationId) {
-        console.warn(`Cannot update conversation messages: conversationId is missing for email ${emailId}. Using only the specific message ID for updates.`);
-        
-        // If no conversationId, at least update the specific message
-        const { error: singleMessageError } = await supabase
-          .from('messages')
-          .update({ status: 'closed' })
-          .eq('microsoft_message_id', emailId);
-
-        if (singleMessageError) {
-          console.error(`Error updating status for specific message ${emailId}:`, singleMessageError);
-          // If there's a Supabase API key error, log it clearly
-          if (singleMessageError.message?.includes('Invalid API key')) {
-            console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-          }
-        } else {
-          console.log(`Successfully updated status to closed for message ${emailId}`);
-        }
-        
-        return res.status(200).json({ message: 'Ticket resolved successfully but conversation update was limited.' });
-      }
-      
-      console.log(`Attempting to fetch ALL messages for conversation ID: ${originalMessage.conversationId}`);
-      
-      // First, fetch all messages for this conversation to confirm what needs updating
-      const { data: allConversationMessages, error: fetchError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('microsoft_conversation_id', originalMessage.conversationId);
-
-      if (fetchError) {
-        console.error(`Error fetching messages for conversation ${originalMessage.conversationId}:`, fetchError);
-        // Check for API key errors
-        if (fetchError.message?.includes('Invalid API key')) {
-          console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-        }
-      } else {
-        console.log(`Found ${allConversationMessages?.length || 0} messages in conversation to update`);
-      }
-      
-      // Now update ALL messages in this conversation
-      console.log(`Updating status to 'closed' for ALL messages in conversation: ${originalMessage.conversationId}`);
-      const { data: updateData, error: conversationMessagesError } = await supabase
-        .from('messages')
-        .update({ status: 'closed' })
-        .eq('microsoft_conversation_id', originalMessage.conversationId)
-        .select(); // Get back the updated records
-
-      if (conversationMessagesError) {
-        console.error(`Error updating status for conversation ${originalMessage.conversationId}:`, conversationMessagesError);
-        // Check for API key errors again
-        if (conversationMessagesError.message?.includes('Invalid API key')) {
-          console.error('CRITICAL ERROR: Supabase Invalid API key detected. Please check your Supabase configuration.');
-        }
-        return res.status(500).json({ message: 'Error updating message statuses', error: conversationMessagesError });
-      } else {
-        const updatedCount = updateData?.length || 0;
-        console.log(`Successfully updated status to 'closed' for ${updatedCount} messages in conversation ${originalMessage.conversationId}`);
-        
-        // If no records were updated, this is suspicious - log it
-        if (updatedCount === 0) {
-          console.warn(`WARNING: No messages were updated to 'closed' status, even though we found ${allConversationMessages?.length || 0} messages in this conversation. Check if all messages were already closed or if there's a database connectivity issue.`);
-        }
-      }
-    } catch (dbError) {
-      console.error('General error during database operations for message status update:', dbError);
-      return res.status(500).json({ message: 'Error updating message statuses', error: dbError.message || 'Unknown error' });
-    }
+    // The ticket and message statuses are handled by the ticket controller. 
+    // This section is removed to prevent redundant database updates and potential recursive triggers.
     
     // Log the outgoing resolution email to our database
     try {
@@ -635,61 +648,7 @@ exports.resolveTicket = async (req, res) => {
       // Do not fail the operation if DB logging fails
     }
     
-    // Before sending the final response, perform one more database update with a longer delay
-    // This will catch any new messages (like the feedback email) that arrived during our processing
-    try {
-      console.log(`Setting up final conversation update in 5 seconds to catch feedback email...`);
-      
-      // Schedule a delayed update with higher timeout to catch any new messages in this conversation
-      setTimeout(async () => {
-        try {
-          if (!originalMessage.conversationId) {
-            console.log('No conversation ID available for final update, skipping.');
-            return;
-          }
 
-          console.log(`Executing final update for conversation ${originalMessage.conversationId} to catch feedback email...`);
-          
-          // Final update to catch the feedback email that might have arrived after the initial updates
-          const { data: finalUpdateData, error: finalUpdateError } = await supabase
-            .from('messages')
-            .update({ status: 'closed' })
-            .eq('microsoft_conversation_id', originalMessage.conversationId)
-            .select();
-            
-          if (finalUpdateError) {
-            console.error('Final update error:', finalUpdateError);
-            if (finalUpdateError.message?.includes('Invalid API key')) {
-              console.error('CRITICAL ERROR: Supabase Invalid API key detected in final update.');
-            }
-          } else {
-            const updatedCount = finalUpdateData?.length || 0;
-            console.log(`Final update complete - updated ${updatedCount} messages to 'closed'.`);
-            
-            // Quick verification check to see if any messages in this conversation are still 'open'
-            const { data: openMsgs, error: checkError } = await supabase
-              .from('messages')
-              .select('microsoft_message_id')
-              .eq('microsoft_conversation_id', originalMessage.conversationId)
-              .eq('status', 'open');
-              
-            if (checkError) {
-              console.error('Error checking for remaining open messages:', checkError);
-            } else if (openMsgs && openMsgs.length > 0) {
-              console.warn(`ALERT: ${openMsgs.length} messages in this conversation are still marked as 'open' after final update.`);
-              console.warn('Message IDs still open:', openMsgs.map(m => m.microsoft_message_id).join(', '));
-            } else {
-              console.log('Success! All messages in this conversation are now closed.');
-            }
-          }
-        } catch (finalError) {
-          console.error('Error in final conversation update:', finalError);
-        }
-      }, 5000); // 5 second delay to ensure feedback email is received and stored
-      
-    } catch (finalError) {
-      console.error('Error setting up final update:', finalError);
-    }
 
     return res.status(200).json({ message: 'Ticket resolved and resolution email sent successfully' });
   } catch (error) {
