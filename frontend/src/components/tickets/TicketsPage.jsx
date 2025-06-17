@@ -824,6 +824,20 @@ const TicketsPage = () => {
   };
 
   // Fetch closed emails with status='closed'
+  const fetchReopenedTickets = async () => {
+    if (!selectedDeskId) return;
+    setLoading(true);
+    try {
+      const reopenedTickets = await TicketService.getTickets(selectedDeskId, 'reopen');
+      setTickets(reopenedTickets);
+    } catch (error) {
+      console.error('Error fetching reopened tickets:', error);
+      setError('Failed to fetch reopened tickets.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchClosedEmails = async () => {
     if (!selectedDeskId) return;
     
@@ -883,21 +897,22 @@ const handleNewReply = useCallback((newReplyMessage) => {
       sentDateTime: newReplyMessage.sent_at,
       receivedDateTime: newReplyMessage.received_at || newReplyMessage.created_at
     };
-    
+    console.log("-------->formatted data is ",formattedMessage)
     const conversationId = newReplyMessage.microsoft_conversation_id;
     if (!conversationId) {
       console.warn('[Supabase Realtime] handleNewReply: Missing conversation ID, cannot update ticket lists', newReplyMessage);
     }
     
     // First update the displayed conversation
+    console.log('------->prev conv is ----->',conversation);
     setConversation(prevConversation => {
       if (!prevConversation) prevConversation = [];
-      
+      console.log("----->newConv",prevConversation);
       const exists = prevConversation.some(msg => 
         msg.id === formattedMessage.id || 
         (formattedMessage.temp_id && msg.id === formattedMessage.temp_id)
       );
-      
+      console.log("Is exists value is -------->",exists);
       if (!exists) {
         console.log('[Supabase Realtime] handleNewReply: Adding new message to current conversation UI.');
         const updatedConversation = [...prevConversation, formattedMessage].sort((a, b) => {
@@ -914,10 +929,11 @@ const handleNewReply = useCallback((newReplyMessage) => {
           }
           return dateA - dateB;
         });
+        console.log("Updated Conv ------>",updatedConversation);
         return updatedConversation;
       }
       
-      console.log('[Supabase Realtime] handleNewReply: Message already exists in conversation UI.');
+      console.log('[Supabase Realtime] handleNewReply: Message already exists in conversation UI.',prevConversation);
       return prevConversation;
     });
 
@@ -2013,16 +2029,7 @@ ${deskName}`;
             // No navigation needed, already in closed view
           }
 
-          // Now, attempt to send the feedback email
-          try {
-            console.log(`Attempting to send feedback email for ticket ${ticketId}...`);
-            await TicketService.requestTicketFeedback(ticketId);
-            console.log(`Feedback email request sent for ticket ${ticketId}.`);
-            toast.info('Feedback email request sent.');
-          } catch (feedbackError) {
-            console.error(`Error sending feedback email for ticket ${ticketId}:`, feedbackError);
-            toast.error('Failed to send feedback email request.'); // More specific error
-          }
+          toast.success('Ticket has been closed.');
 
         } catch (fetchError) {
           console.error('Error refreshing ticket lists after closure:', fetchError);
@@ -2123,15 +2130,20 @@ ${deskName}`;
                   onChange={(e) => {
                     setEmailStatusFilter(e.target.value);
                     
-                    // Fetch closed tickets when switching to closed tab
+                    // Fetch tickets based on status
                     if (e.target.value === 'closed') {
                       fetchClosedEmails();
+                    } else if (e.target.value === 'reopen') {
+                      fetchReopenedTickets();
+                    } else {
+                      fetchTickets();
                     }
                   }}
                   style={{ flex: 2 }}
                 >
                   <option value="open">Open</option>
                   <option value="closed">Closed</option>
+                  <option value="reopen">Reopen</option>
                 </Form.Select>
               </div>
             </Card.Header>
@@ -2286,11 +2298,12 @@ ${deskName}`;
                       {/* Tickets Section */}
                       {(() => {
                         const isClosedView = emailStatusFilter === 'closed';
-                        // When in closed view, show all tickets from resolvedEmails array
-                        // The backend API already filters by status='closed'
+                        const isReopenView = emailStatusFilter === 'reopen';
+
+                        // Data sources
                         const closedTickets = resolvedEmails;
-                        // For open view, ensure we're only showing non-closed tickets
-                        const openTickets = tickets.filter(ticket => ticket.status !== 'closed');
+                        const openTickets = tickets.filter(ticket => ticket.status === 'open' || ticket.status === 'new');
+                        const reopenTickets = tickets.filter(ticket => ticket.status === 'reopen');
                         
                         // Sort helper function to ensure latest tickets appear first
                         const sortByLatest = (tickets) => {
@@ -2302,11 +2315,18 @@ ${deskName}`;
                           });
                         };
 
+                        // Determine which list of tickets to use based on the filter
+                        const ticketsForFilter = isClosedView 
+                          ? closedTickets 
+                          : isReopenView 
+                            ? reopenTickets 
+                            : openTickets;
+
                         // Use filtered results if search is active, and ensure they're always sorted newest first
                         const allTicketsToDisplay = sortByLatest(
-                          searchText.trim() ? filteredTickets : (isClosedView ? closedTickets : openTickets)
+                          searchText.trim() ? filteredTickets : ticketsForFilter
                         );
-                        const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets";
+                        const sectionTitle = isClosedView ? "Closed Tickets" : isReopenView ? "Reopened Tickets" : "Open Tickets";
 
                         // Only render the section if there are tickets to display for the current filter
                         if (allTicketsToDisplay.length === 0) {
@@ -2366,28 +2386,17 @@ ${deskName}`;
                                 <div className="ticket-info">
                                   <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
                                   <div>
-                                    {/* Only show status badges for important statuses (not open or closed) */}
-                                    {ticket.status !== 'open' && ticket.status !== 'closed' && (
-                                      <Badge 
-                                        bg={ticket.status === 'new' ? 'info' : 
-                                           ticket.status === 'pending' ? 'warning' : 'light'} 
-                                        pill
-                                        className="me-1"
-                                      >
-                                        {ticket.status}
-                                      </Badge>
-                                    )}
+
                                     
-                                    {/* Show message count for all tickets with green background for open tickets */}
-                                    <Badge 
-                                      bg={ticket.status !== 'closed' ? 'success' : 'light'} 
-                                      text={ticket.status !== 'closed' ? 'white' : 'dark'} 
-                                      pill 
-                                      className="me-1 message-count-badge"
-                                      title="Number of messages in this conversation"
+                                    <Badge
+                                      bg={
+                                        ticket.status === 'open' ? 'success' :
+                                        ticket.status === 'closed' ? 'danger' :
+                                        ticket.status === 'reopen' ? 'warning' : 'secondary'
+                                      }
+                                      pill
                                     >
-                                      <FaComment size={10} className="me-1" />
-                                      {ticket.message_count || 0}
+                                      {ticket.status}
                                     </Badge>
                                     
                                     {/* Removed green dot indicator as requested */}

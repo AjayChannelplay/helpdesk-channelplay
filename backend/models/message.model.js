@@ -19,7 +19,8 @@ const Message = {
         body_preview: messageData.content?.substring(0, 100),
         sender_id: messageData.sender_id,
         is_internal: messageData.is_internal || false,
-        direction: messageData.is_internal ? 'internal' : 'outgoing'
+        direction: messageData.is_internal ? 'internal' : 'outgoing',
+        microsoft_conversation_id: messageData.microsoft_conversation_id // Pass through the conversation ID
       };
       
       // Use logMessage to actually create the message
