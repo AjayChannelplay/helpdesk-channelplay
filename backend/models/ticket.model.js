@@ -108,10 +108,19 @@ const Ticket = {
   // Update ticket
   update: async (id, ticketData) => {
     try {
-      // Extract the fields to update from ticketData
+      // First, fetch the existing ticket to ensure we have conversation_id
+      const { data: existingTicket, error: fetchError } = await supabase
+        .from('tickets')
+        .select('conversation_id') // Only select what we need
+        .eq('id', id)
+        .single();
+
+      if (fetchError || !existingTicket) {
+        console.error('Error fetching existing ticket for update or ticket not found:', fetchError);
+        throw new Error(fetchError?.message || 'Ticket not found for update.');
+      }
+
       const updateData = {};
-      
-      // Only include fields that are provided
       if (ticketData.subject !== undefined) updateData.subject = ticketData.subject;
       if (ticketData.description !== undefined) updateData.description = ticketData.description;
       if (ticketData.priority !== undefined) updateData.priority = ticketData.priority;
@@ -120,25 +129,36 @@ const Ticket = {
       if (ticketData.assigned_to_user_id !== undefined) updateData.assigned_to_user_id = ticketData.assigned_to_user_id;
       if (ticketData.assigned_to !== undefined) updateData.assigned_to_user_id = ticketData.assigned_to; // For backward compatibility
       
-      // Add the updated_at timestamp
+      // Ensure conversation_id is preserved
+      if (existingTicket.conversation_id) {
+        updateData.conversation_id = existingTicket.conversation_id;
+      } else {
+        // This case should ideally not happen if conversation_id is NOT NULL and ticket exists
+        console.error(`CRITICAL: conversation_id is NULL for existing ticket id ${id}. This should not happen, but proceeding with update.`);
+        // If the DB constraint is active, the .update() below will fail if existingTicket.conversation_id was null and it's required.
+      }
+      
       updateData.updated_at = new Date();
       
-      const { data, error } = await supabase
+      const { data, error: updateError } = await supabase
         .from('tickets')
         .update(updateData)
         .eq('id', id)
         .select()
         .single();
       
-      if (error) {
-        console.error('Error updating ticket:', error);
-        throw new Error(`Error updating ticket: ${error.message}`);
+      if (updateError) {
+        console.error('Error updating ticket in Supabase:', updateError);
+        throw new Error(`Error updating ticket: ${updateError.message}`);
       }
       
       return data;
     } catch (error) {
-      console.error('Exception in Ticket.update:', error);
-      throw new Error(`Error updating ticket: ${error.message}`);
+      // Log the full error if it's not already one of our specific messages
+      if (!error.message.startsWith('Error updating ticket') && !error.message.startsWith('Ticket not found')) {
+        console.error('Exception in Ticket.update:', error);
+      }
+      throw error; // Re-throw to be caught by controller
     }
   },
   

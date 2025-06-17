@@ -26,8 +26,10 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
   let ratingButtonsHTML = '';
   for (let i = 1; i <= 10; i++) {
     const feedbackLink = `${baseFeedbackUrl}?token=${feedbackToken}&rating=${i}&ticket_id=${ticketIdForLink}`;
+    // Using data-hover attributes that will be styling hooks for some email clients
+    // Note: Hover effects don't work in most email clients, so providing both hover and static options
     ratingButtonsHTML += `
-      <a href="${feedbackLink}" target="_blank" style="display: inline-block; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; background-color: ${colorGradient[i-1]}; color: #ffffff; text-decoration: none; margin: 0 4px; font-weight: bold; font-size: 14px;">${i}</a>
+      <a href="${feedbackLink}" target="_blank" style="display: inline-block; width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 0; background-color: #FFFFFF; color: #333333; text-decoration: none; margin: 0 4px; font-weight: bold; font-size: 14px; border: 1px solid #d0d0d0;" onmouseover="this.style.backgroundColor='${colorGradient[i-1]}'; this.style.color='#FFFFFF';" onmouseout="this.style.backgroundColor='#FFFFFF'; this.style.color='#333333';">${i}</a>
     `;
   }
 
@@ -104,6 +106,16 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
         <div class="rating-buttons">
           ${ratingButtonsHTML}
         </div>
+        <table style="width: 100%; margin: 5px 0 20px; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+          <tr>
+            <td width="50%" align="left" style="padding: 0;">
+              <span style="font-size: 13px; color: #666;">Very Dissatisfied</span>
+            </td>
+            <td width="50%" align="right" style="padding: 0;">
+              <span style="font-size: 13px; color: #666;">Satisfied</span>
+            </td>
+          </tr>
+        </table>
         <p class="footer-text">
           Your feedback is important to us and helps us improve.
           <br>

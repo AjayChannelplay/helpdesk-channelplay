@@ -2306,7 +2306,7 @@ ${deskName}`;
                         const allTicketsToDisplay = sortByLatest(
                           searchText.trim() ? filteredTickets : (isClosedView ? closedTickets : openTickets)
                         );
-                        const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets";
+                        const sectionTitle = isClosedView ? "Resolved Tickets" : "Open Tickets";
 
                         // Only render the section if there are tickets to display for the current filter
                         if (allTicketsToDisplay.length === 0) {
@@ -2492,7 +2492,7 @@ ${deskName}`;
                         </Badge> | 
                       </>
                     )}
-                    <FaRegCalendarAlt className="mx-1" /> {
+                    <FaRegCalendarAlt className="mx-1" /> Received On: {
                       (() => {
                         try {
                           // Make sure the date object is properly created with time information
@@ -2506,10 +2506,13 @@ ${deskName}`;
                           
                           // Use the current time if time component is zeroed out (00:00:00)
                           const displayDate = isTimeValid ? dateObj : new Date();
-                          return displayDate.toLocaleString();
+                          return displayDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/') + ', ' + 
+                                 displayDate.toLocaleTimeString('en-GB');
                         } catch (e) {
                           console.error('Error formatting date:', e);
-                          return new Date().toLocaleString();
+                          const now = new Date();
+                          return now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/') + ', ' + 
+                                 now.toLocaleTimeString('en-GB');
                         }
                       })()
                     }
@@ -2562,7 +2565,8 @@ ${deskName}`;
                               }
                             </strong>
                             <small>
-                              {new Date(selectedTicket.created_at || selectedTicket.created || Date.now()).toLocaleString()}
+                              Received On: {new Date(selectedTicket.created_at || selectedTicket.created || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '/') + ', ' + 
+                              new Date(selectedTicket.created_at || selectedTicket.created || Date.now()).toLocaleTimeString('en-GB')}
                             </small>
                           </div>
                           <div className="message-body">
