@@ -32,6 +32,26 @@ exports.createTicket = async (req, res) => {
       });
     }
     
+    // Send auto-response email to customer
+    if (newTicket.customer_email) {
+      try {
+        const desk = await Desk.findById(newTicket.desk_id);
+        const EmailServiceClass = require('../utils/email.service');
+        const emailService = new EmailServiceClass(desk);
+        await emailService.init();
+        const { generateTicketReceivedEmailHTML } = require('../utils/emailTemplates');
+        const emailBody = generateTicketReceivedEmailHTML(newTicket.id);
+        await emailService.sendMicrosoftEmail({
+          to: newTicket.customer_email,
+          subject: `Ticket[${newTicket.id}] Created`,
+          body: emailBody,
+          ticketId: newTicket.id
+        });
+      } catch (emailErr) {
+        console.error('Failed to send auto-response email:', emailErr);
+        // Optionally log or notify but don't block ticket creation
+      }
+    }
     // Return the new ticket
     res.status(201).json({
       message: 'Ticket created successfully',

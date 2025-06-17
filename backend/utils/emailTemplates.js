@@ -129,6 +129,16 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
   return emailHTML;
 }
 
+function generateTicketReceivedEmailHTML(ticketId) {
+  return `
+    <p>Dear Requestor,</p>
+    <p>We have received your request and a ticket has been created. We’ll review your request and revert shortly.</p>
+    <br>
+    <p>Regards<br>1Office Service Desk Team</p>
+  `;
+}
+
 module.exports = {
   generateFeedbackEmailHTML,
+  generateTicketReceivedEmailHTML,
 };
