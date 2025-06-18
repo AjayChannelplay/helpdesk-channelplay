@@ -56,7 +56,13 @@ exports.getTickets = async (req, res) => {
     
     // Apply filters if provided
     if (req.query.status) {
-      query = query.eq('status', req.query.status);
+      if (req.query.status === 'open') {
+        // If 'open' is requested, include 'open', 'new', and 'reopen' statuses
+        query = query.in('status', ['open', 'new', 'reopen']);
+      } else {
+        // For other statuses (e.g., 'closed'), use exact match
+        query = query.eq('status', req.query.status);
+      }
     }
     
     // Check for desk_id parameter from frontend
