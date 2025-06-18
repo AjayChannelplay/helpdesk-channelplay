@@ -26,7 +26,7 @@
 }
 
 .ticket-item {
-  padding: 12px 15px;
+  padding: 18px 20px;
   border-bottom: 1px solid #dee2e6;
   cursor: pointer;
   transition: background-color 0.2s;

@@ -824,19 +824,7 @@ const TicketsPage = () => {
   };
 
   // Fetch closed emails with status='closed'
-  const fetchReopenedTickets = async () => {
-    if (!selectedDeskId) return;
-    setLoading(true);
-    try {
-      const reopenedTickets = await TicketService.getTickets(selectedDeskId, 'reopen');
-      setTickets(reopenedTickets);
-    } catch (error) {
-      console.error('Error fetching reopened tickets:', error);
-      setError('Failed to fetch reopened tickets.');
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   const fetchClosedEmails = async () => {
     if (!selectedDeskId) return;
@@ -2132,18 +2120,15 @@ ${deskName}`;
                     
                     // Fetch tickets based on status
                     if (e.target.value === 'closed') {
-                      fetchClosedEmails();
-                    } else if (e.target.value === 'reopen') {
-                      fetchReopenedTickets();
-                    } else {
-                      fetchTickets();
+                      fetchClosedEmails(); // This fetches 'closed' status tickets
+                    } else { // 'open'
+                      fetchTickets(); // This should now fetch 'open', 'new', AND 'reopen' status tickets
                     }
                   }}
                   style={{ flex: 2 }}
                 >
                   <option value="open">Open</option>
-                  <option value="closed">Closed</option>
-                  <option value="reopen">Reopen</option>
+                  <option value="closed">Resolved</option>
                 </Form.Select>
               </div>
             </Card.Header>
@@ -2298,12 +2283,16 @@ ${deskName}`;
                       {/* Tickets Section */}
                       {(() => {
                         const isClosedView = emailStatusFilter === 'closed';
-                        const isReopenView = emailStatusFilter === 'reopen';
+                        // const isReopenView = emailStatusFilter === 'reopen'; // Removed
 
                         // Data sources
-                        const closedTickets = resolvedEmails;
-                        const openTickets = tickets.filter(ticket => ticket.status === 'open' || ticket.status === 'new');
-                        const reopenTickets = tickets.filter(ticket => ticket.status === 'reopen');
+                        const closedTickets = resolvedEmails; 
+                        // 'tickets' state (from fetchTickets) should now include open, new, and reopened tickets.
+                        // This filter ensures only those are considered for the "Open Tickets" view.
+                        const openAndReopenedTickets = tickets.filter(ticket => 
+                          ticket.status === 'open' || ticket.status === 'new' || ticket.status === 'reopen'
+                        );
+                        // const reopenTickets = tickets.filter(ticket => ticket.status === 'reopen'); // Removed
                         
                         // Sort helper function to ensure latest tickets appear first
                         const sortByLatest = (tickets) => {
@@ -2318,15 +2307,15 @@ ${deskName}`;
                         // Determine which list of tickets to use based on the filter
                         const ticketsForFilter = isClosedView 
                           ? closedTickets 
-                          : isReopenView 
-                            ? reopenTickets 
-                            : openTickets;
+                          // : isReopenView // Removed condition
+                          //   ? reopenTickets // Removed list
+                          : openAndReopenedTickets; // Use combined list for 'open' view
 
                         // Use filtered results if search is active, and ensure they're always sorted newest first
                         const allTicketsToDisplay = sortByLatest(
                           searchText.trim() ? filteredTickets : ticketsForFilter
                         );
-                        const sectionTitle = isClosedView ? "Closed Tickets" : isReopenView ? "Reopened Tickets" : "Open Tickets";
+                        const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets"; // Simplified
 
                         // Only render the section if there are tickets to display for the current filter
                         if (allTicketsToDisplay.length === 0) {
@@ -2369,7 +2358,7 @@ ${deskName}`;
                                 <div className="ticket-header">
                                   <div className="ticket-subject">
                                     {ticket.user_ticket_id && (
-                                      <span className="ticket-id">Ticket[{ticket.user_ticket_id}] </span>
+                                      <span className="ticket-id">#{ticket.user_ticket_id} </span>
                                     )}
                                     {ticket.subject || 'No Subject'}
                                   </div>
@@ -2388,16 +2377,11 @@ ${deskName}`;
                                   <div>
 
                                     
-                                    <Badge
-                                      bg={
-                                        ticket.status === 'open' ? 'success' :
-                                        ticket.status === 'closed' ? 'danger' :
-                                        ticket.status === 'reopen' ? 'warning' : 'secondary'
-                                      }
-                                      pill
-                                    >
-                                      {ticket.status}
-                                    </Badge>
+                                    {ticket.status === 'reopen' && (
+                                      <Badge bg="warning" className="ms-1" pill>
+                                        Reopen
+                                      </Badge>
+                                    )}
                                     
                                     {/* Removed green dot indicator as requested */}
                                     {ticket.reopened_from_closed && (
@@ -2481,7 +2465,7 @@ ${deskName}`;
                 <div>
                   <h5 className="mb-0">
                     {selectedTicket.user_ticket_id && (
-                      <span className="ticket-id">Ticket[{selectedTicket.user_ticket_id}] </span>
+                      <span className="ticket-id">#{selectedTicket.user_ticket_id} </span>
                     )}
                     {selectedTicket.subject}
                     {selectedTicket.messageCount > 1 && (
