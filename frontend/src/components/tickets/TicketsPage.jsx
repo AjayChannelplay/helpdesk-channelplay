@@ -4,6 +4,7 @@ import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
   Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip, Pagination, Tab, Nav, Tabs, Modal
 } from 'react-bootstrap';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { 
   FaEnvelope, FaTicketAlt, FaUser, FaUserCog, FaComments, FaComment,
   FaInbox, FaHistory, FaSyncAlt, FaFilter, FaSort,
@@ -13,6 +14,7 @@ import {
   FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFileAlt, FaPlus, FaRegClock, FaRegCalendarAlt, FaEye, FaTimes
 } from 'react-icons/fa';
 import EmailService from '../../services/email.service';
+import { FiExternalLink } from 'react-icons/fi';
 import TicketService from '../../services/ticket.service';
 import AuthService from '../../services/auth.service';
 import API from '../../services/api.service';
@@ -94,6 +96,7 @@ const TicketsPage = () => {
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [conversationForTicketId, setConversationForTicketId] = useState(null);
   const [success, setSuccess] = useState(null);
   const [selectedDeskId, setSelectedDeskId] = useState(null);
   const [desks, setDesks] = useState([]);
@@ -865,166 +868,148 @@ const TicketsPage = () => {
     }
 };
 
-// Handlers for Supabase Realtime events (moved up to fix initialization errors)
-const handleNewReply = useCallback((newReplyMessage) => {
-  console.log('[Supabase Realtime] handleNewReply: Processing new message for current conversation:', newReplyMessage);
-  
-  // Format the message to match the expected UI format
-  const formattedMessage = {
-    ...newReplyMessage,
-    // Transform body_html into the nested body.content format that UI expects
-    body: {
-      contentType: 'HTML',
-      content: newReplyMessage.body_html || newReplyMessage.body_preview || ''
-      },
-      // Ensure bodyPreview is available at the top level as the UI expects
-      bodyPreview: newReplyMessage.body_preview,
-      // Ensure fromName is set
-      fromName: newReplyMessage.from_name || 'Unknown',
-      // Format timestamps for UI
-      sentDateTime: newReplyMessage.sent_at,
-      receivedDateTime: newReplyMessage.received_at || newReplyMessage.created_at
-    };
-    console.log("-------->formatted data is ",formattedMessage)
-    const conversationId = newReplyMessage.microsoft_conversation_id;
-    if (!conversationId) {
-      console.warn('[Supabase Realtime] handleNewReply: Missing conversation ID, cannot update ticket lists', newReplyMessage);
+// Helper function to sort messages consistently across the app
+const sortMessages = (messagesToSort) => {
+  if (!Array.isArray(messagesToSort)) return [];
+  return [...messagesToSort].sort((a, b) => {
+    const dateA = a.created_at ? new Date(a.created_at) :
+                  new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
+    const dateB = b.created_at ? new Date(b.created_at) :
+                  new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
+    const timeDiff = Math.abs(dateA - dateB);
+    if (timeDiff < 1000 && a.id && b.id) {
+      return String(a.id).localeCompare(String(b.id)); // Ensure IDs are strings for localeCompare
     }
-    
-    // First update the displayed conversation
-    console.log('------->prev conv is ----->',conversation);
-    setConversation(prevConversation => {
-      if (!prevConversation) prevConversation = [];
-      console.log("----->newConv",prevConversation);
-      const exists = prevConversation.some(msg => 
-        msg.id === formattedMessage.id || 
-        (formattedMessage.temp_id && msg.id === formattedMessage.temp_id)
-      );
-      console.log("Is exists value is -------->",exists);
-      if (!exists) {
-        console.log('[Supabase Realtime] handleNewReply: Adding new message to current conversation UI.');
-        const updatedConversation = [...prevConversation, formattedMessage].sort((a, b) => {
-          // First try to use created_at as it's the most reliable server-side timestamp
-          const dateA = a.created_at ? new Date(a.created_at) : 
-                      new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
-          const dateB = b.created_at ? new Date(b.created_at) : 
-                      new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
-          
-          // If dates are very close (within 1 second), use message ID as secondary sort
-          const timeDiff = Math.abs(dateA - dateB);
-          if (timeDiff < 1000 && a.id && b.id) {
-            return a.id.localeCompare(b.id);
-          }
-          return dateA - dateB;
-        });
-        console.log("Updated Conv ------>",updatedConversation);
-        return updatedConversation;
-      }
-      
-      console.log('[Supabase Realtime] handleNewReply: Message already exists in conversation UI.',prevConversation);
-      return prevConversation;
-    });
+    return dateA - dateB;
+  });
+};
 
-    // Also update the selectedTicket.messages array if this message belongs to the current ticket
-    const currentSelectedTicket = selectedTicketRef.current;
-    
-    if (currentSelectedTicket && (
-      (formattedMessage.ticket_id && formattedMessage.ticket_id === currentSelectedTicket.id) || 
-      (formattedMessage.microsoft_conversation_id && formattedMessage.microsoft_conversation_id === currentSelectedTicket.id) ||
-      (currentSelectedTicket.conversationId && formattedMessage.microsoft_conversation_id && 
-        formattedMessage.microsoft_conversation_id === currentSelectedTicket.conversationId) ||
-      (currentSelectedTicket.microsoft_conversation_id && 
-        formattedMessage.microsoft_conversation_id && 
-        formattedMessage.microsoft_conversation_id === currentSelectedTicket.microsoft_conversation_id)
-    )) {
-      setSelectedTicket(prevTicket => {
-        if (!prevTicket) return null;
-        
-        const messages = prevTicket.messages || [];
-        const existsInTicketMessages = messages.some(msg => msg.id === formattedMessage.id);
-        if (!existsInTicketMessages) {
-          console.log('[Supabase Realtime] handleNewReply: Updating selectedTicket.messages.');
-          const updatedMessages = [...messages, formattedMessage].sort((a, b) => {
-              // First try to use created_at as it's the most reliable server-side timestamp
-              const dateA = a.created_at ? new Date(a.created_at) : 
-                          new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
-              const dateB = b.created_at ? new Date(b.created_at) : 
-                          new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
-              
-              // If dates are very close (within 1 second), use message ID as secondary sort
-              const timeDiff = Math.abs(dateA - dateB);
-              if (timeDiff < 1000 && a.id && b.id) {
-                return a.id.localeCompare(b.id);
-              }
-              return dateA - dateB;
-          });
-          return {
-            ...prevTicket,
-            messages: updatedMessages,
-          };
-        }
-        return prevTicket;
-      });
-      
-      // Here's the key fix: Also update the message cache in the main ticket/email lists
-      // This ensures the conversation persists when switching between tickets
-      if (conversationId) {
-        // Update the messages in any matching tickets in the main ticket list
-        setTickets(prevTickets => updateTicketsListWithNewMessage(prevTickets, conversationId, formattedMessage));
-        
-        // Also update allEmails list so switching tabs preserves conversation
-        setAllEmails(prevEmails => updateTicketsListWithNewMessage(prevEmails, conversationId, formattedMessage));
-        
-        // Update unreadEmails if needed
-        if (formattedMessage.direction === 'incoming') {
-          setUnreadEmails(prevUnread => updateTicketsListWithNewMessage(prevUnread, conversationId, formattedMessage));
-        }
-      }
-    }
-  }, [setConversation, setSelectedTicket, setTickets, setAllEmails, setUnreadEmails]);
-  
-  // Helper function to update any ticket list with new messages
-  const updateTicketsListWithNewMessage = (ticketList, conversationId, newMessage) => {
+// Helper function to update any ticket list with new messages
+  const updateTicketsListWithNewMessage = useCallback((ticketList, idToMatch, newMessage, useTicketId) => {
     if (!ticketList || !Array.isArray(ticketList)) return ticketList;
-    
+
     return ticketList.map(ticket => {
-      // Match ticket by id or conversationId
-      if (ticket.id === conversationId || ticket.conversationId === conversationId) {
-        const messages = ticket.messages || [];
-        
-        // Check if message already exists
-        const messageExists = messages.some(msg => msg.id === newMessage.id);
+      let isMatch = false;
+      if (useTicketId) {
+        isMatch = ticket.id === idToMatch;
+      } else { // Match by Microsoft Conversation ID
+        isMatch = ticket.microsoft_conversation_id === idToMatch || ticket.conversation_id === idToMatch; // conversation_id for legacy email tickets
+      }
+
+      if (isMatch) {
+        const messageExists = ticket.messages && ticket.messages.some(msg => msg.id === newMessage.id || (newMessage.temp_id && msg.id === newMessage.temp_id));
         if (!messageExists) {
-          console.log(`[Supabase Realtime] Updating cached messages for ticket/conversation: ${conversationId}`);
+          const updatedMessages = sortMessages([...(ticket.messages || []), newMessage]); // Use hoisted sortMessages
           
-          // Sort messages by date with improved chronological ordering
-          const updatedMessages = [...messages, newMessage].sort((a, b) => {
-            // First try to use created_at as it's the most reliable server-side timestamp
-            const dateA = a.created_at ? new Date(a.created_at) : 
-                        new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
-            const dateB = b.created_at ? new Date(b.created_at) : 
-                        new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
-            
-            // If dates are very close (within 1 second), use message ID as secondary sort
-            const timeDiff = Math.abs(dateA - dateB);
-            if (timeDiff < 1000 && a.id && b.id) {
-              return a.id.localeCompare(b.id);
-            }
-            return dateA - dateB;
-          });
-          
-          // Update ticket with new messages and move it to the top if needed
           return {
             ...ticket,
             messages: updatedMessages,
-            bodyPreview: newMessage.bodyPreview || ticket.bodyPreview,
-            last_message_at: newMessage.sentDateTime || newMessage.receivedDateTime || new Date().toISOString()
+            bodyPreview: newMessage.bodyPreview || ticket.bodyPreview, // Update preview with the latest message
+            last_message_sent_at: newMessage.sentDateTime || newMessage.receivedDateTime || ticket.last_message_sent_at, // Update last message time
+            message_count: (ticket.message_count || 0) + 1, // Increment message count
+            // last_activity_at: newMessage.sentDateTime || newMessage.receivedDateTime || new Date().toISOString(), // Also update general last_activity_at
+            // status: (ticket.status === 'closed' && newMessage.direction === 'incoming') ? 'reopened' : ticket.status, // Example: Reopen ticket on new customer message
           };
         }
       }
       return ticket;
     });
+  }, [sortMessages]); // Dependency for useCallback
+
+// Handlers for Supabase Realtime events (moved up to fix initialization errors)
+const handleNewReply = useCallback((newReplyMessage) => {
+  console.log('[Supabase Realtime] handleNewReply: Processing new message:', newReplyMessage);
+
+  const formattedMessage = {
+    ...newReplyMessage,
+    body: {
+      contentType: 'HTML',
+      content: newReplyMessage.body_html || newReplyMessage.body_preview || ''
+    },
+    bodyPreview: newReplyMessage.body_preview,
+    fromName: newReplyMessage.from_name || 'Unknown',
+    sentDateTime: newReplyMessage.sent_at,
+    receivedDateTime: newReplyMessage.received_at || newReplyMessage.created_at
   };
+
+  const msgMicrosoftConversationId = newReplyMessage.microsoft_conversation_id;
+  const msgTicketId = formattedMessage.ticket_id;
+
+  // Update the displayed conversation if the message belongs to the selected ticket
+  const currentSelectedTicket = selectedTicketRef.current;
+  let messageBelongsToCurrentSelectedTicket = false;
+  if (currentSelectedTicket) {
+    if (msgTicketId && currentSelectedTicket.id === msgTicketId) {
+      messageBelongsToCurrentSelectedTicket = true;
+    } else if (msgMicrosoftConversationId && currentSelectedTicket.microsoft_conversation_id === msgMicrosoftConversationId) {
+      messageBelongsToCurrentSelectedTicket = true;
+    } else if (msgMicrosoftConversationId && currentSelectedTicket.conversation_id === msgMicrosoftConversationId) { // Legacy check for older data structure
+        messageBelongsToCurrentSelectedTicket = true;
+    }
+  }
+
+  if (messageBelongsToCurrentSelectedTicket) {
+    // console.log('------->prev conv is ----->',conversation); // Optional log
+    setConversation(prevConversation => {
+      if (!prevConversation) prevConversation = [];
+      const exists = prevConversation.some(msg => 
+        msg.id === formattedMessage.id || 
+        (formattedMessage.temp_id && msg.id === formattedMessage.temp_id) // Check temp_id if it exists for optimistic updates
+      );
+      if (!exists) {
+        const updatedConvo = [...prevConversation, formattedMessage];
+        return sortMessages(updatedConvo); // USE HOISTED sortMessages
+      }
+      return prevConversation;
+    });
+
+    setSelectedTicket(prevTicket => {
+      if (!prevTicket) return null;
+      const messages = prevTicket.messages || [];
+      const existsInTicketMessages = messages.some(msg => msg.id === formattedMessage.id);
+      if (!existsInTicketMessages) {
+        const updatedMessages = sortMessages([...messages, formattedMessage]); // USE HOISTED sortMessages
+        return {
+          ...prevTicket,
+          messages: updatedMessages,
+          // Optionally update last_message_sent_at and message_count here if backend doesn't send ticket update event rapidly
+          // last_message_sent_at: formattedMessage.sentDateTime || formattedMessage.receivedDateTime,
+          // message_count: (prevTicket.message_count || 0) + 1, 
+        };
+      }
+      return prevTicket;
+    });
+  }
+
+  // Always update the main ticket lists (for badges, counts, etc.)
+  // updateTicketsListWithNewMessage needs to be robust to handle matching by either ID
+  if (msgTicketId) { // Prioritize ticket_id if available
+    setTickets(prevTickets => updateTicketsListWithNewMessage(prevTickets, msgTicketId, formattedMessage, true)); // true for useTicketId
+    setAllEmails(prevEmails => updateTicketsListWithNewMessage(prevEmails, msgTicketId, formattedMessage, true));
+    if (formattedMessage.direction === 'incoming' && !formattedMessage.is_read) {
+      setUnreadEmails(prevUnread => updateTicketsListWithNewMessage(prevUnread, msgTicketId, formattedMessage, true));
+    }
+  } else if (msgMicrosoftConversationId) { // Fallback to Microsoft Conversation ID
+    setTickets(prevTickets => updateTicketsListWithNewMessage(prevTickets, msgMicrosoftConversationId, formattedMessage, false)); // false for useConversationId
+    setAllEmails(prevEmails => updateTicketsListWithNewMessage(prevEmails, msgMicrosoftConversationId, formattedMessage, false));
+    if (formattedMessage.direction === 'incoming' && !formattedMessage.is_read) {
+      setUnreadEmails(prevUnread => updateTicketsListWithNewMessage(prevUnread, msgMicrosoftConversationId, formattedMessage, false));
+    }
+  } else {
+    console.warn('[Supabase Realtime] handleNewReply: Message has neither ticket_id nor microsoft_conversation_id. Cannot update ticket lists effectively.', formattedMessage);
+  }
+
+}, [
+  conversation, // For console.log. Remove if log is removed and no longer needed for debugging.
+  setConversation, 
+  selectedTicketRef, 
+  setSelectedTicket, 
+  setTickets, 
+  setAllEmails, 
+  setUnreadEmails,
+  updateTicketsListWithNewMessage, // This function must be stable (defined outside component or memoized with its own deps)
+  sortMessages // Hoisted and stable
+]);
 
   const handleNewTicket = useCallback((newTicketPayload) => {
     // newTicketPayload is the raw data from Supabase for an insert on the 'tickets' table
@@ -1569,107 +1554,84 @@ const handleNewReply = useCallback((newReplyMessage) => {
   const fetchConversationData = useCallback(async (ticket) => {
     if (!ticket) return;
 
-    // Helper function to sort messages consistently across the app
-    const sortMessages = (messages) => {
-      if (!Array.isArray(messages)) return [];
-      return [...messages].sort((a, b) => {
-        // First try to use created_at as it's the most reliable server-side timestamp
-        const dateA = a.created_at ? new Date(a.created_at) : 
-                    new Date(a.sent_at || a.sentDateTime || a.receivedDateTime || 0);
-        const dateB = b.created_at ? new Date(b.created_at) : 
-                    new Date(b.sent_at || b.sentDateTime || b.receivedDateTime || 0);
-        
-        // If dates are very close (within 1 second), use message ID as secondary sort
-        const timeDiff = Math.abs(dateA - dateB);
-        if (timeDiff < 1000 && a.id && b.id) {
-          return a.id.localeCompare(b.id);
-        }
-        return dateA - dateB;
-      });
-    };
-
+    // Helper to format messages consistently
     const formatMessages = (messages) => {
       if (!Array.isArray(messages)) return [];
-      // First format all messages
-      const formattedMsgs = messages.map(msg => ({
+      const formattedMsgs = messages.map((msg) => ({
         ...msg,
         body: { contentType: 'HTML', content: msg.body_html || msg.body_preview || msg.body?.content || '' },
         bodyPreview: msg.body_preview || (msg.body?.content ? msg.body.content.substring(0, 150) : ''),
         fromName: msg.from_name || msg.from?.emailAddress?.name || 'Unknown',
         sentDateTime: msg.sent_at || msg.sentDateTime,
         receivedDateTime: msg.received_at || msg.created_at || msg.receivedDateTime,
-        // Ensure we have isAgent and isCustomer flags for rendering
         isAgent: msg.direction === 'outgoing' || msg.is_agent,
-        isCustomer: msg.direction === 'incoming' || msg.is_customer
+        isCustomer: msg.direction === 'incoming' || msg.is_customer,
       }));
-      // Then sort them using our consistent sorting function
       return sortMessages(formattedMsgs);
     };
 
     try {
       setLoading(true);
       setError(null);
-      console.log('Fetching conversation data for ticket:', ticket.id);
 
-      // If the ticket object already contains messages, format and display them immediately
       if (ticket.messages && ticket.messages.length > 0) {
-        console.log('Using existing messages from ticket object.');
         setConversation(formatMessages(ticket.messages));
       } else {
         let messages = [];
-        
-        // Different behavior based on ticket type
         if (ticket.isEmail && (ticket.conversationId || ticket.emailId)) {
-          // Legacy path for email-type tickets from the old system
-          console.log(`Fetching email conversation for legacy ticket:`, ticket.id);
           const conversationData = await EmailService.fetchConversation(ticket.id);
-          const messageArray = conversationData?.data || (Array.isArray(conversationData) ? conversationData : []);
-          messages = messageArray;
+          messages = conversationData?.data || (Array.isArray(conversationData) ? conversationData : []);
         } else {
-          // Ticket-centric model: retrieve messages by ticket_id or conversation_id
           if (ticket.conversation_id) {
-            // Fetch by Microsoft conversation ID if available
-            console.log(`Fetching messages by conversation_id: ${ticket.conversation_id}`);
             messages = await TicketService.getTicketMessages(null, ticket.conversation_id);
           } else {
-            // Fetch by ticket ID
-            console.log(`Fetching messages by ticket_id: ${ticket.id}`);
             messages = await TicketService.getTicketMessages(ticket.id);
           }
-          console.log(`Retrieved ${messages.length} messages for ticket`);
-          
-          // If no messages found, create a placeholder using ticket data
-          if (!Array.isArray(messages) || messages.length === 0) {
-            if (ticket.subject) {
-              messages = [{
+
+          if ((!Array.isArray(messages) || messages.length === 0) && ticket.subject) {
+            messages = [
+              {
                 id: `ticket-${ticket.id}`,
                 body_html: ticket.description || `<p>Ticket opened: ${ticket.subject}</p>`,
                 body_preview: ticket.subject,
                 from_name: ticket.customer_name || ticket.customer_email || 'Customer',
                 created_at: ticket.created_at,
                 is_customer: true,
-                direction: 'incoming'
-              }];
-            }
+                direction: 'incoming',
+              },
+            ];
           }
         }
-        
         setConversation(formatMessages(messages));
       }
-
     } catch (error) {
       console.error('Error loading conversation:', error);
-      setError('Failed to load conversation. ' + (error.response?.data?.message || 'Please try again.'));
+      setError(`Failed to load conversation. ${error.response?.data?.message || 'Please try again.'}`);
     } finally {
       setLoading(false);
-      // Scroll to bottom of conversation automatically
       setTimeout(() => {
         if (messagesEndRef.current) {
           messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
       }, 300);
     }
-  }, [selectedDeskId]);
+  }, [setLoading, setError, setConversation, messagesEndRef]);
+
+  // Helper function to get the sender's display name
+  const getSenderDisplay = (ticket) => {
+    if (!ticket) return 'N/A';
+    return (
+      ticket.customer_name ||
+      ticket.from_name ||
+      ticket.sender_name ||
+      ticket.from?.emailAddress?.name ||
+      ticket.sender?.emailAddress?.name ||
+      ticket.customer_email ||
+      ticket.from?.emailAddress?.address || // Fallback to email address if name is not available
+      ticket.sender?.emailAddress?.address ||
+      'N/A'
+    );
+  };
 
   // Cleanup function for blob URLs when component unmounts
   useEffect(() => {
@@ -1763,10 +1725,13 @@ const handleNewReply = useCallback((newReplyMessage) => {
     }
   }, [emailStatusFilter, fetchTickets, fetchClosedEmails, fetchUnreadEmails]);
 
-  // Initial load of conversation when ticket is selected
+  // Initial load of conversation when a new ticket is selected
   useEffect(() => {
-    fetchConversationData(selectedTicket);
-  }, [selectedTicket, fetchConversationData]);
+    if (selectedTicket?.id && selectedTicket.id !== conversationForTicketId) {
+      fetchConversationData(selectedTicket);
+      setConversationForTicketId(selectedTicket.id);
+    }
+  }, [selectedTicket, conversationForTicketId, fetchConversationData]);
   
 
   
@@ -1809,9 +1774,8 @@ const handleNewReply = useCallback((newReplyMessage) => {
       
       // Add signature to email content
       const emailContent = `${replyText}
-
-<br><br>
-Thanks & Regards,<br>
+<br>
+Thanks & Regards,
 ${deskName}`;
 
       const formData = new FormData();
@@ -2044,10 +2008,12 @@ ${deskName}`;
   };
 
   return (
-    <div className="tickets-container">
-      <Row>
-        <Col md={2} className="tickets-sidebar">
-          <Card className="mb-3">
+    <div className="tickets-container" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}> {/* Adjust height as needed */}
+      <PanelGroup direction="horizontal" style={{ height: '100%' }} autoSaveId={null}> {/* Disable autoSaveId to respect defaultSize on each load */}
+        <Panel defaultSize={20} minSize={20} maxSize={60} className="tickets-sidebar-panel"> {/* Adjusted default size */} {/* Corresponds roughly to md={4} for default */} 
+          {/* tickets-sidebar class can be used for internal styling of the panel's content */}
+          <div className="tickets-sidebar" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <Card className="mb-3" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <Card.Header className="p-2">
               {/* First row with search and refresh button */}
               <div className="d-flex align-items-center mb-2">
@@ -2132,7 +2098,7 @@ ${deskName}`;
                 </Form.Select>
               </div>
             </Card.Header>
-            <Card.Body className="p-0">
+            <Card.Body className="p-0" style={{ flexGrow: 1, overflowY: 'auto' }}>
               {error && (
                 <Alert variant="danger" className="m-2" dismissible onClose={() => setError(null)}>
                   <FaExclamationCircle className="me-2" /> {error}
@@ -2315,7 +2281,7 @@ ${deskName}`;
                         const allTicketsToDisplay = sortByLatest(
                           searchText.trim() ? filteredTickets : ticketsForFilter
                         );
-                        const sectionTitle = isClosedView ? "Closed Tickets" : "Open Tickets"; // Simplified
+                        const sectionTitle = isClosedView ? "Resolved Tickets" : "Open Tickets"; // Simplified
 
                         // Only render the section if there are tickets to display for the current filter
                         if (allTicketsToDisplay.length === 0) {
@@ -2374,30 +2340,23 @@ ${deskName}`;
                                 </div>
                                 <div className="ticket-info">
                                   <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
-                                  <div>
-
-                                    
-                                    {ticket.status === 'reopen' && (
-                                      <Badge bg="warning" className="ms-1" pill>
-                                        Reopen
+                                  <div className="ticket-tags mt-1">
+                                    {ticket.status === 'new' && (
+                                      <Badge bg="primary" className="me-1" pill>
+                                        New
                                       </Badge>
                                     )}
-                                    
-                                    {/* Removed green dot indicator as requested */}
-                                    {ticket.reopened_from_closed && (
-                                      <Badge bg="purple" pill title="This ticket was created from a reply to a closed conversation">
+                                    {ticket.message_count === 1 && (
+                                      <Badge bg="primary" className="me-1" pill>
+                                        New
+                                      </Badge>
+                                    )}
+                                    {ticket.status === 'reopen' && (
+                                      <Badge bg="secondary" className="me-1" pill>
                                         Reopened
                                       </Badge>
                                     )}
                                   </div>
-                                </div>
-                                <div className="ticket-message">
-                                  {/* Standardized display format - consistently show the same preview across admin/agent views */}
-                                  <small>
-                                    {ticket.from_name && ticket.subject === ticket.from_name 
-                                      ? (ticket.body_preview || ticket.body_text || 'Check ticket details') 
-                                      : (ticket.body_preview || ticket.body_text || ticket.subject || 'Check ticket details')}
-                                  </small>
                                 </div>
                               </div>
                              ))}
@@ -2456,69 +2415,88 @@ ${deskName}`;
               )}
             </Card.Body>
           </Card>
-        </Col>
-        
-        <Col md={10}>
-          {selectedTicket ? (
-            <Card className="ticket-detail">
-              <Card.Header className="d-flex justify-content-between align-items-center">
-                <div>
-                  <h5 className="mb-0">
+          </div>
+        </Panel>
+        <PanelResizeHandle style={{ width: '8px', background: '#e0e0e0', cursor: 'col-resize', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '1px', height: '30px', background: '#bdbdbd' }} />
+        </PanelResizeHandle>
+        <Panel>
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Content of the former Col md={8} for ticket details goes here */}
+            {selectedTicket ? (
+            <Card className="ticket-detail" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <Card.Header style={{ flexShrink: 0, padding: '0.75rem 1rem' }}>
+                {/* Top Row */}
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                  <div className="d-flex align-items-center">
                     {selectedTicket.user_ticket_id && (
-                      <span className="ticket-id">#{selectedTicket.user_ticket_id} </span>
+                      <h5 className="mb-0 me-2 ticket-id" style={{ fontWeight: 'bold' }}>
+                        #{selectedTicket.user_ticket_id}
+                      </h5>
                     )}
-                    {selectedTicket.subject}
-                    {selectedTicket.messageCount > 1 && (
-                      <Badge bg="secondary" className="ms-2">{selectedTicket.messageCount} messages</Badge>
+                    <FiExternalLink size={18} className="me-2 text-muted" />
+                    <span className="text-muted" style={{ color: '#dee2e6' }}>|</span>
+                    <h5 className="mb-0 ms-2 ticket-detail-subject">
+                      {selectedTicket.subject}
+                    </h5>
+                  </div>
+                  <div>
+                    {!selectedTicket.isEmail && selectedTicket.status && 
+                      (selectedTicket.status.trim().toLowerCase() === 'open' || 
+                       selectedTicket.status.trim().toLowerCase() === 'reopen' || 
+                       selectedTicket.status.trim().toLowerCase() === 'closed') && (
+                      <Badge
+                        bg={
+                          selectedTicket.status.trim().toLowerCase() === 'open' ? 'success' : 
+                          'secondary' // for both 'reopen' and 'closed'
+                        }
+                        className="text-capitalize"
+                      >
+                        {selectedTicket.status}
+                      </Badge>
                     )}
-                  </h5>
-                  <small className="text-muted">
-                    {!selectedTicket.isEmail && (
-                      <>
-                        <Badge 
-                          bg={selectedTicket.status === 'new' ? 'info' : 
-                             selectedTicket.status === 'open' ? 'success' : 
-                             selectedTicket.status === 'closed' ? 'secondary' : 'warning'} 
-                          pill
-                        >
-                          {selectedTicket.status}
-                        </Badge> | 
-                      </>
-                    )}
-                    <FaRegCalendarAlt className="mx-1" /> {
+                  </div>
+                </div>
+
+                {/* Bottom Row */}
+                <div className="d-flex justify-content-start align-items-center text-muted" style={{ fontSize: '0.875rem' }}>
+                  <span className="me-2">
+                    Raised By: {getSenderDisplay(selectedTicket)}
+                  </span>
+                  <span className="text-muted" style={{ color: '#dee2e6' }}>|</span>
+                  <span className="ms-2">
+                    <FaRegCalendarAlt className="me-1" />
+                    Raised On: {
                       (() => {
                         try {
-                          // Make sure the date object is properly created with time information
                           const timestamp = selectedTicket.created_at || selectedTicket.created || Date.now();
                           const dateObj = new Date(timestamp);
-                          // Check if the timestamp is valid and has proper time values
-                          const isTimeValid = !isNaN(dateObj.getTime()) && 
-                                            !(dateObj.getHours() === 0 && 
-                                              dateObj.getMinutes() === 0 && 
-                                              dateObj.getSeconds() === 0);
-                          
-                          // Use the current time if time component is zeroed out (00:00:00)
-                          const displayDate = isTimeValid ? dateObj : new Date();
-                          return displayDate.toLocaleString();
+                          if (isNaN(dateObj.getTime())) throw new Error('Invalid date');
+
+                          const day = String(dateObj.getDate()).padStart(2, '0');
+                          const month = String(dateObj.getMonth() + 1).padStart(2, '0'); // Month is 0-indexed
+                          const year = dateObj.getFullYear();
+                          const hours = String(dateObj.getHours()).padStart(2, '0');
+                          const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+                          const seconds = String(dateObj.getSeconds()).padStart(2, '0');
+                          return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
                         } catch (e) {
                           console.error('Error formatting date:', e);
-                          return new Date().toLocaleString();
+                          const fallbackDate = new Date();
+                          const day = String(fallbackDate.getDate()).padStart(2, '0');
+                          const month = String(fallbackDate.getMonth() + 1).padStart(2, '0');
+                          const year = fallbackDate.getFullYear();
+                          const hours = String(fallbackDate.getHours()).padStart(2, '0');
+                          const minutes = String(fallbackDate.getMinutes()).padStart(2, '0');
+                          const seconds = String(fallbackDate.getSeconds()).padStart(2, '0');
+                          return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
                         }
                       })()
                     }
-                  </small>
-                </div>
-                <div>
-                  <Button 
-                    variant="outline-secondary" 
-                    size="sm" 
-                    onClick={handleRefreshCurrentTicket}
-                  >
-                    <FaSyncAlt className="me-1" /> Refresh
-                  </Button>
+                  </span>
                 </div>
               </Card.Header>
-              <Card.Body className="conversation-container p-0">
+              <Card.Body className="conversation-body p-3" style={{ flex: '1 1 0%', overflowY: 'auto', minHeight: 0 }}>
                 {error && (
                   <Alert variant="danger" className="m-2" dismissible onClose={() => setError(null)}>
                     <FaExclamationCircle className="me-2" /> {error}
@@ -2886,9 +2864,9 @@ ${deskName}`;
                   </div>
                 )}
               </Card.Body>
-              {/* Only show reply section for non-closed tickets/emails */}
+              {/* Reply Section - Now wrapped in Card.Footer */}
               {(emailStatusFilter !== 'closed' && (selectedTicket.status !== 'closed')) && (
-                <Card.Footer>
+                <Card.Footer style={{ flexShrink: 0, background: '#f8f9fa', overflow: 'hidden' /* or your preferred footer bg */ }}>
                   <Form>
                     <Form.Group>
                       {/* CC field removed */}
@@ -2999,10 +2977,11 @@ ${deskName}`;
               <p className="text-muted">Choose a ticket from the list to view and reply to conversations.</p>
             </div>
           )}
-        </Col>
-      </Row>
-    </div>
-  );
+        </div>
+      </Panel>
+    </PanelGroup>
+  </div>
+);
 };
 
 // Add custom CSS for compact ticket items
