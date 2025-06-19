@@ -163,7 +163,13 @@ exports.replyToEmail = async (req, res) => {
     console.log('Calculated CC-Recipients for this reply (from form + original thread):', JSON.stringify(formattedCcRecipients, null, 2));
     console.log('--- End Debugging Email Reply ---\n');
     
-    const formattedContent = content;
+        // 1. Normalize all newline types (e.g., \r\n, \r) to a single \n
+    const normalizedContent = content.replace(/\r\n|\r/g, '\n');
+    // 2. Trim leading/trailing whitespace from the entire content block
+    const trimmedContent = normalizedContent.trim();
+    // 3. Replace one or more occurrences of (optional whitespace + newline + optional whitespace) with a single <br>
+    // This collapses multiple blank lines (even with spaces) into one <br>
+    const formattedContent = trimmedContent.replace(/(?:\s*\n\s*)+/g, '<br>');
     
     // Log attachment information
     console.log(`Processing ${attachments?.length || 0} attachments for email reply`);
@@ -254,6 +260,32 @@ exports.replyToEmail = async (req, res) => {
       const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
       const deskDisplayName = senderGraphUser.displayName;
 
+      // --- START MODIFICATION: Find the ticket and prepare its ID ---
+      let ticketIdToAssociate = null;
+      let ticketToUpdate = null;
+
+      if (originalMessage.conversationId) {
+        console.log(`[EmailCtrl] Attempting to find ticket with conversation_id: ${originalMessage.conversationId}`);
+        const { data: foundTicket, error: findTicketError } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('conversation_id', originalMessage.conversationId)
+          .single();
+
+        if (findTicketError && findTicketError.code !== 'PGRST116') { // PGRST116: 0 rows
+          console.error(`[EmailCtrl] Error finding ticket by conversation_id ${originalMessage.conversationId}:`, findTicketError);
+        } else if (foundTicket) {
+          ticketIdToAssociate = foundTicket.id;
+          ticketToUpdate = foundTicket; // Keep the found ticket object for updating later
+          console.log(`[EmailCtrl] Found ticket ID ${ticketIdToAssociate} for conversation_id ${originalMessage.conversationId}`);
+        } else {
+          console.log(`[EmailCtrl] No ticket found with conversation_id ${originalMessage.conversationId}. Will log message without direct ticket_id.`);
+        }
+      } else {
+        console.warn('[EmailCtrl] originalMessage.conversationId is null or undefined. Cannot associate with a ticket.');
+      }
+      // --- END MODIFICATION ---
+
       // Log attachment information right before database save
       console.log(`📎 CONFIRMATION: has_attachments=${attachments.length > 0}, attachment count=${attachments.length}`);
       console.log(`📎 CONFIRMATION: s3AttachmentUrls length=${s3AttachmentUrls.length}`);
@@ -263,7 +295,9 @@ exports.replyToEmail = async (req, res) => {
       
       const messageDataForDb = {
         desk_id,
-        ticket_id: null, // Not applicable for direct replies
+        // --- MODIFICATION: Use the found ticketIdToAssociate ---
+        ticket_id: ticketIdToAssociate, 
+        // --- END MODIFICATION ---
         microsoft_message_id: null, // Graph API /reply doesn't return the new message ID directly
         microsoft_conversation_id: originalMessage.conversationId,
         subject: originalMessage.subject, // Replies usually adopt the original subject, possibly prefixed with "Re:"
@@ -293,6 +327,37 @@ exports.replyToEmail = async (req, res) => {
 
       const loggedMessage = await Message.logMessage(messageDataForDb);
       console.log('[EmailCtrl] Reply logged to DB:', loggedMessage?.id);
+      
+      // --- START MODIFICATION: Update ticket message_count and last_message_sent_at ---
+      if (ticketToUpdate && loggedMessage) { // Ensure message was successfully logged
+        try {
+          const newStatus = ticketToUpdate.status === 'new' ? 'open' : ticketToUpdate.status; // Change 'new' to 'open'
+          
+          const { data: updatedTicket, error: updateTicketError } = await supabase
+            .from('tickets')
+            .update({ 
+              message_count: ticketToUpdate.message_count + 1,
+              last_message_sent_at: new Date().toISOString(),
+              status: newStatus, // Update status if needed
+              updated_at: new Date().toISOString() // Also update the 'updated_at' timestamp
+            })
+            .eq('id', ticketToUpdate.id)
+            .select() // To get the updated record back
+            .single();
+
+          if (updateTicketError) {
+            console.error(`[EmailCtrl] Failed to update ticket ${ticketToUpdate.id} message_count/last_message_sent_at:`, updateTicketError);
+          } else {
+            console.log(`[EmailCtrl] Successfully updated ticket ${updatedTicket.id}: message_count to ${updatedTicket.message_count}, last_message_sent_at to ${updatedTicket.last_message_sent_at}, status to ${updatedTicket.status}`);
+          }
+        } catch (ticketUpdateErr) {
+          console.error(`[EmailCtrl] Exception during ticket update for ${ticketToUpdate.id}:`, ticketUpdateErr);
+        }
+      } else if (ticketToUpdate && !loggedMessage) {
+        console.warn(`[EmailCtrl] Message logging failed for conversation ${originalMessage.conversationId}. Skipping ticket update.`);
+      }
+      // --- END MODIFICATION ---
+
       console.log(`[EmailCtrl-DEBUG] replyToEmail: loggedMessage.assigned_to_user_id AFTER logMessage = ${loggedMessage?.assigned_to_user_id}`);
       console.log(`[EmailCtrl] Successfully logged outgoing reply for original email ${emailId} to DB.`);
       console.log(`[EmailCtrl] Message ID in database: ${loggedMessage?.id || 'unknown'}`);
@@ -364,224 +429,78 @@ exports.resolveTicket = async (req, res) => {
     
     const originalMessage = messageResponse.data;
     
-    // Create the email content with numerical rating options directly in email
-    // const resolutionContent = `
-    //   <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; max-width: 600px;">
-    //     <h2 style="color: #444; font-weight: 600;">Your ticket has been resolved</h2>
-    //     <p>Thank you for contacting our support team! Your issue has been marked as resolved.</p>
-    //     <p>We'd love to hear about your experience. How satisfied were you with our service?</p>
+    // Fetch ticket and desk details
+    const { supabase } = require('../config/db.config');
+    const { data: ticketData, error: ticketError } = await supabase
+      .from('tickets')
+      .select('*, desks(*)')
+      .eq('conversation_id', originalMessage.conversationId)
+      .single();
+
+    if (ticketError || !ticketData) {
+      console.error(`Failed to fetch ticket with conversation_id ${originalMessage.conversationId}:`, ticketError);
+      return res.status(404).json({ message: 'Ticket not found' });
+    }
+    
+    const deskData = ticketData.desks;
+    
+    const recipientName = originalMessage.from?.emailAddress?.name || 'Valued Customer';
+    const deskName = deskData?.name || 'Support Team';
+    const userTicketId = ticketData?.user_ticket_id || 'N/A';
+
+    let baseFeedbackUrlWithScheme;
+    const feedbackPath = '/api/feedback/process';
+
+    if (process.env.NODE_ENV === 'production') {
+      const productionHost = process.env.BACKEND_URL || 'api.channelplay.in'; // Default to api.channelplay.in if BACKEND_URL not set in prod
+      baseFeedbackUrlWithScheme = `https://${productionHost}${feedbackPath}`;
+    } else {
+      const developmentHost = process.env.BACKEND_URL || 'localhost:3001';
+      baseFeedbackUrlWithScheme = `http://${developmentHost}${feedbackPath}`;
+    }
+
+    const resolutionContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+      <meta charset="UTF-8">
+      </head>
+      <body style="font-family: sans-serif; font-size: 14px; color: #333;">
+        <p>Dear ${recipientName},</p>
+        <p>We're pleased to inform you that your support ticket [Ticket ID: #${userTicketId}] has been successfully resolved.</p>
+        <br>
+        <p>We'd love to hear about your experience!<br>Please rate our service for this request:</p>
         
-    //     <div style="margin: 30px 0; text-align: center;">
-    //       <p style="font-weight: 500; font-size: 18px; margin-bottom: 20px;">Click on a number to rate your satisfaction level:</p>
-          
-    //       <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 550px; margin: 0 auto;">
-    //         <tr>
-    //           <td align="center" style="padding-bottom: 15px;">
-    //             <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
-    //               <tr>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff5a65; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">1</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff7a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">2</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ff9a7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">3</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #ffba7e; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">4</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #f3b941; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">5</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //               </tr>
-    //             </table>
-    //           </td>
-    //         </tr>
-    //         <tr>
-    //           <td align="center">
-    //             <table cellspacing="0" cellpadding="0" border="0" style="display: inline-table;">
-    //               <tr>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #e0c54d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">6</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #c8cf58; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">7</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #a3d063; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">8</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #76ca6d; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 18px; line-height: 50px; text-align: center;">9</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //                 <td style="padding: 0 7px;">
-    //                   <table cellspacing="0" cellpadding="0" border="0">
-    //                     <tr>
-    //                       <td align="center" style="width: 50px; height: 50px; border-radius: 50%; background-color: #26cb7c; border: 2px solid #e0e0e0; box-shadow: 0 3px 8px rgba(0,0,0,0.12); padding: 0; vertical-align: middle;">
-    //                         <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: block; width: 100%; height: 100%; text-decoration: none; color: white; font-weight: 600; font-size: 16px; line-height: 50px; text-align: center;">10</a>
-    //                       </td>
-    //                     </tr>
-    //                   </table>
-    //                 </td>
-    //               </tr>
-    //             </table>
-    //           </td>
-    //         </tr>
-    //       </table>
-          
-    //       <div style="position: relative; width: 100%; margin: 15px auto 5px;">
-    //         <div style="display: flex; justify-content: space-between; width: 92%; max-width: 550px; margin: 0 auto;">
-    //           <span style="color: #666; font-size: 14px; text-align: left;">Very Dissatisfied</span>
-    //           <span style="color: #666; font-size: 14px; text-align: right;">Very Satisfied</span>
-    //         </div>
-    //       </div>
-    //     </div>
-        
-    //     <p>If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
-    //     <p>Best regards,<br>Support Team</p>
-    //   </div>
-    // `;
-    const resolutionContent = 
-    `<!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="UTF-8">
-    <title>Ticket Resolved</title>
-    </head>
-    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; padding: 20px; background-color: #f5f5f5;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-      <h2 style="color: #444; font-weight: 600; margin-top: 0;">Your ticket has been resolved</h2>
-      <p style="color: #666;">Thank you for contacting our support team! Your issue has been marked as resolved.</p>
-      <p style="color: #666;">We'd love to hear about your experience. How satisfied were you with our service?</p>
-      
-      <div style="margin: 30px 0;">
-        <div style="text-align: center; margin-bottom: 10px;">
-          <h3 style="color: #333; margin: 0; font-size: 20px;">How satisfied are you with our service?</h3>
-        </div>
-        <div style="text-align: center; margin-bottom: 20px;">
-          <p style="color: #666; font-size: 14px; margin: 0;">Click on a number to rate your satisfaction level</p>
-        </div>
-        
-        <!-- Scale buttons -->
-        <div style="margin: 25px 0;">
-          <div style="display: flex; justify-content: space-between; max-width: 100%; margin: 0 auto; width: fit-content;">
-            <div style="display: flex; gap: 12px;"> <!-- Increased gap between buttons -->
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;" 
-                 onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">1</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#e67e22'; this.style.borderColor='#e67e22'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">2</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#f39c12'; this.style.borderColor='#f39c12'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">3</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">4</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#3498db'; this.style.borderColor='#3498db'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">5</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#3498db'; this.style.borderColor='#3498db'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">6</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#9b59b6'; this.style.borderColor='#9b59b6'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">7</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">8</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#27ae60'; this.style.borderColor='#27ae60'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">9</a>
-              <a href="http://${process.env.BACKEND_URL || 'localhost:3001'}/api/feedback/process?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" 
-                 style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease; cursor: pointer; flex-shrink: 0;"
-                 onmouseover="this.style.backgroundColor='#1e8449'; this.style.borderColor='#1e8449'; this.style.color='white';"
-                 onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">10</a>
-            </div>
-          </div>
-          
-          <!-- Labels below scale -->
-          <table border="0" cellpadding="0" cellspacing="0" width="458" style="width: 458px; margin: 10px auto 0;">
+        <!-- Rating Scale HTML -->
+        <div style="margin: 25px 0; text-align: left;">
+          <table border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; display: inline-block;">
             <tr>
-              <td align="left" style="font-size: 13px; color: #666; font-weight: 500;">
-                Very Dissatisfied
+              <td style="font-size: 13px; color: #666; font-weight: 500; padding-right: 15px; vertical-align: middle; white-space: nowrap;">Very Dissatisfied</td>
+              <td style="vertical-align: middle;">
+                <div style="display: flex; gap: 5px;">
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">1</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">2</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">3</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">4</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">5</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">6</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">7</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">8</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#27ae60'; this.style.borderColor='#27ae60'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">9</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#1e8449'; this.style.borderColor='#1e8449'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">10</a>
+                </div>
               </td>
-              <td align="right" style="font-size: 13px; color: #666; font-weight: 500;">
-                Very Satisfied
-              </td>
+              <td style="font-size: 13px; color: #666; font-weight: 500; padding-left: 15px; vertical-align: middle; white-space: nowrap;">Very Satisfied</td>
             </tr>
           </table>
         </div>
-      </div>
-      
-      <p style="color: #666;">If you need further assistance, please don't hesitate to contact us again by replying to this email.</p>
-      <p style="color: #666;">Best regards,<br>Support Team</p>
-    </div>
-    </body>
-    </html>`;
+        
+        <p>Note: If you need to reopen this ticket, please reply within 5 days. After this period, a new ticket will need to be created for any additional requests.</p>
+        <br>
+        <p>Thanks & Regards,<br>${deskName}</p>
+      </body>
+      </html>
+    `;
     // Calculate recipients from original message
     const calculatedReplyToRecipients = originalMessage.from ? [originalMessage.from] : (originalMessage.sender ? [originalMessage.sender] : []);
     

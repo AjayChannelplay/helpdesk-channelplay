@@ -1,6 +1,5 @@
 .tickets-container {
   padding: 20px;
-  height: calc(100vh - 60px);
 }
 
 .tickets-sidebar {
@@ -11,7 +10,6 @@
 
 .ticket-list {
   overflow-y: auto;
-  max-height: calc(100vh - 180px);
 }
 
 .ticket-section {
@@ -26,11 +24,20 @@
 }
 
 .ticket-item {
-  padding: 18px 20px;
-  border-bottom: 1px solid #dee2e6;
+  width: 100%; /* Use full width of the parent column */
+  padding: 25px 20px; /* Increased vertical and adjusted horizontal padding */
+  min-height: unset;
+  margin-bottom: 0; /* Remove space between tickets */
+  border-radius: 12px; /* Slightly reduced border-radius for a cleaner look in a list */
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  border: 1px solid #eee;
+  box-sizing: border-box;
   cursor: pointer;
   transition: background-color 0.2s;
 }
+
+
 
 .ticket-item:hover {
   background-color: #f8f9fa;
@@ -80,8 +87,8 @@
 
 .ticket-info {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start; /* Align items to the start of the flex container */
   margin-bottom: 5px;
 }
 
@@ -103,18 +110,35 @@
   color: #6c757d;
 }
 
-.ticket-detail {
-  height: calc(100vh - 100px);
-  display: flex;
-  flex-direction: column;
-}
+
 
 /* Styles for reopened tickets */
 .ticket-item.reopened-ticket {
   border-left: 4px solid #6f42c1;
 }
 
+/* Add any additional specific styles for TicketsPage here */
+
+.ticket-detail-subject {
+  overflow-wrap: break-word; /* Allow breaking long words */
+  word-wrap: break-word; /* Legacy support for overflow-wrap */
+  word-break: break-word; /* Break words if they are too long to fit */
+  white-space: normal; /* Ensure text wraps to new lines */
+  max-width: 100%; /* Ensure it doesn't exceed parent width */
+}
+
+.ticket-detail .card-header > div:first-child {
+  /* This is the div containing the subject and other meta info */
+  flex-grow: 1; /* Allow it to take available space */
+  min-width: 0; /* Important for flex items containing text that needs to wrap */
+}
+
 /* Badge styles */
+.ticket-tags .badge {
+  font-size: 0.7em; /* Smaller font size for the tag */
+  padding: 0.25em 0.5em; /* Smaller padding for the tag */
+}
+
 .badge.bg-purple {
   background-color: #6f42c1 !important;
 }
