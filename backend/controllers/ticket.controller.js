@@ -4,8 +4,80 @@ const Desk = require('../models/desk.model');
 const EmailService = require('../utils/email.service');
 const emailController = require('./email.controller'); // Import email controller for resolveTicket
 const { supabase } = require('../config/db.config'); // Add supabase client import
-const { generateFeedbackEmailHTML } = require('../utils/emailTemplates');
+const { generateFeedbackEmailHTML, generateNewTicketAckEmailHTML } = require('../utils/emailTemplates');
 const { v4: uuidv4 } = require('uuid');
+//const EmailService = require('../utils/email.service');
+//const Desk = require('../models/desk.model');
+
+// Initialize Supabase Realtime subscription for new tickets
+const setupTicketAcknowledgmentListener = () => {
+  console.log('Setting up Supabase Realtime listener for new tickets...');
+  
+  const subscription = supabase
+    .channel('ticket_inserts')
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'tickets'
+    }, async (payload) => {
+      try {
+        console.log('New ticket created via Realtime:', payload.new);
+        await exports.sendTicketAcknowledgment(payload.new);
+      } catch (error) {
+        console.error('Error in ticket acknowledgment:', error);
+      }
+    })
+    .subscribe();
+  
+  return subscription;
+};
+
+// Call this function when your application starts
+let ticketSubscription;
+if (process.env.NODE_ENV !== 'test') {
+  ticketSubscription = setupTicketAcknowledgmentListener();
+}
+
+// Send acknowledgment email for a new ticket
+exports.sendTicketAcknowledgment = async (ticket) => {
+  try {
+    console.log(`Sending acknowledgment for ticket ${ticket.id}`);
+    
+    // Get desk information
+    const desk = await Desk.findById(ticket.desk_id);
+    if (!desk) {
+      throw new Error(`Desk not found for ID: ${ticket.desk_id}`);
+    }
+    
+    // Initialize email service for the desk
+    const emailService = new EmailService(desk);
+    await emailService.init();
+    
+    // Generate email content
+    const customerName = ticket.from_name || 'Valued Customer';
+    const ticketDisplayId = ticket.user_ticket_id || ticket.id;
+    let determinedDeskName = 'Our Support Team'; // Default value
+    if (desk && desk.name && typeof desk.name === 'string' && desk.name.trim() !== '') {
+      determinedDeskName = desk.name.trim();
+    }
+    const emailHtmlContent = generateNewTicketAckEmailHTML(customerName, ticketDisplayId, determinedDeskName);
+    
+    // Send the email
+    await emailService.sendEmail({
+      to: ticket.from_address,
+      subject: `Re: ${ticket.subject || 'Your support ticket'}`,
+      htmlBody: emailHtmlContent,  // Use htmlBody instead of body
+      inReplyTo: ticket.initial_message_graph_id || ticket.conversation_id,
+      references: ticket.conversation_id
+    });
+    
+    console.log(`Acknowledgment email sent for ticket ${ticket.id}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending ticket acknowledgment:', error);
+    throw error;
+  }
+};
 
 // Create a new ticket
 exports.createTicket = async (req, res) => {

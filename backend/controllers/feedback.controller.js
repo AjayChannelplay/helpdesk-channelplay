@@ -215,7 +215,7 @@ function generateFeedbackForm(ticketId, messageId) {
  * @param {string} ticketId - The ticket ID
  * @param {string} token - The feedback token
  */
-function generateThankYouPage(rating, ticketId, token) {
+function generateThankYouPage(rating, ticketId, token, ticketNumber) {
   const numericRating = parseInt(rating, 10);
   let color = '#3498db'; // Default blue
   let emoji = '😐';
@@ -383,15 +383,12 @@ function generateThankYouPage(rating, ticketId, token) {
         </div>
         
         <div class="message">
-          <p>Your rating of <strong>${rating}</strong> for ticket #${ticketId || '---'} has been recorded.</p>
+          <p>Your rating of <strong>${rating}</strong> for ticket <strong>#${ticketNumber|| '---'}</strong> has been recorded.</p>
           <p>We appreciate you taking the time to help us improve our service.</p>
         </div>
         
         <a href="#" class="close-btn" onclick="window.close(); return false;">Close Window</a>
         
-        <div class="ticket-reference">
-          Reference: ${token ? token.substring(0, 8) : 'N/A'}
-        </div>
       </div>
     </div>
   </body>
@@ -543,7 +540,9 @@ exports.processFeedback = async (req, res) => {
       customer_email: customerEmail || (ticket?.customer_email) || 'unknown@customer.com', // Fallback to unknown
       message_id: messageId || null,
       comments: comments || null,
-      agent_id: agentId // Link feedback to the agent we found
+      agent_id: agentId,// Link feedback to the agent we found
+      ticket_number:ticket?.user_ticket_id
+
     };
   
     console.log(`Agent ID found for this feedback: ${agentId}`);
@@ -554,7 +553,8 @@ exports.processFeedback = async (req, res) => {
       conversation_id: feedbackData.conversation_id,
       rating: feedbackData.rating,
       customer_email: feedbackData.customer_email,
-      message_id: feedbackData.message_id
+      message_id: feedbackData.message_id,
+      ticket_number: feedbackData.ticket_number
     });
     
     try {
@@ -567,7 +567,7 @@ exports.processFeedback = async (req, res) => {
     }
     
     // Return a thank you page with improved UI
-    return res.send(generateThankYouPage(numericRating, ticketId, req.query.token));
+    return res.send(generateThankYouPage(numericRating, ticketId, req.query.token,feedbackData.ticket_number));
   
   } catch (error) {
     console.error('Error processing feedback:', error);

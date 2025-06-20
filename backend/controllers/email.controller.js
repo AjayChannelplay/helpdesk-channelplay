@@ -66,14 +66,21 @@ exports.replyToEmail = async (req, res) => {
     const sender_name = req.body.sender_name || 'Support Agent';
     const sender_email = req.body.sender_email || '';
     
-    // Handle cc_recipients as it might be a string from FormData or an array
+    // Handle cc_recipients, expecting a comma-separated string from FormData
     let cc_recipients = [];
-    if (req.body['cc_recipients[]']) {
-      // FormData sends arrays with [] in the name
-      cc_recipients = Array.isArray(req.body['cc_recipients[]']) 
+    if (req.body.cc_recipients && typeof req.body.cc_recipients === 'string') {
+      cc_recipients = req.body.cc_recipients.split(',').map(email => email.trim()).filter(email => email);
+    } else if (req.body.cc_recipients && Array.isArray(req.body.cc_recipients)) {
+      // Fallback for direct array (e.g., if frontend changes or for other clients)
+      cc_recipients = req.body.cc_recipients.map(email => String(email).trim()).filter(email => email);
+    } else if (req.body['cc_recipients[]']) {
+      // Fallback for FormData array format (less likely with current frontend)
+      const rawCcs = Array.isArray(req.body['cc_recipients[]']) 
         ? req.body['cc_recipients[]'] 
         : [req.body['cc_recipients[]']];
+      cc_recipients = rawCcs.map(email => String(email).trim()).filter(email => email);
     }
+    console.log('Parsed Manual CC Recipients:', cc_recipients);
     
     // Get file attachments from multer
     const attachments = req.files || [];
@@ -100,10 +107,13 @@ exports.replyToEmail = async (req, res) => {
     // Get access token for Microsoft Graph API
     const accessToken = await getMicrosoftAccessToken(desk_id);
     
-    // Format CC recipients for Microsoft Graph API
-    const manualCcRecipients = cc_recipients.map(email => ({
-      emailAddress: { address: email }
+    // Format manually added CC recipients for Microsoft Graph API
+    // Ensure cc_recipients is an array of strings before mapping
+    const validManualCcEmails = Array.isArray(cc_recipients) ? cc_recipients.filter(email => typeof email === 'string' && email.includes('@')) : [];
+    const manualCcRecipients = validManualCcEmails.map(email => ({
+      emailAddress: { address: email.trim() }
     }));
+    console.log('Formatted Manual CC for Graph:', JSON.stringify(manualCcRecipients, null, 2));
     
     // Get message details to get original recipients
     const messageResponse = await axios.get(
@@ -380,6 +390,7 @@ exports.replyToEmail = async (req, res) => {
   }
 };
 
+
 // Resolve a ticket and send a resolution email with feedback options
 exports.resolveTicket = async (req, res) => {
   try {
@@ -467,9 +478,8 @@ exports.resolveTicket = async (req, res) => {
       </head>
       <body style="font-family: sans-serif; font-size: 14px; color: #333;">
         <p>Dear ${recipientName},</p>
-        <p>We're pleased to inform you that your support ticket [Ticket ID: #${userTicketId}] has been successfully resolved.</p>
-        <br>
-        <p>We'd love to hear about your experience!<br>Please rate our service for this request:</p>
+        <p>We're pleased to inform you that your support Ticket ID: #${userTicketId} has been successfully resolved.</p>
+        <p>We'd love to hear about your experience! Please rate our service for this request:</p>
         
         <!-- Rating Scale HTML -->
         <div style="margin: 25px 0; text-align: left;">

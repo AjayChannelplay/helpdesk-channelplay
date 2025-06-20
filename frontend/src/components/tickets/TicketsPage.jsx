@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { supabase } from '../../utils/supabaseClient';
+import { Collapse } from 'react-bootstrap'; // Or wherever your Collapse component comes from
+import { FaChevronDown, FaChevronUp } from 'react-icons/fa'; // Or your preferred icons
+// Email acknowledgment is now handled by the backend
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
   Container, Row, Col, Card, ListGroup, Badge, Button, Form, Spinner, Alert, Dropdown, InputGroup, OverlayTrigger, Tooltip, Pagination, Tab, Nav, Tabs, Modal
@@ -10,14 +13,13 @@ import {
   FaInbox, FaHistory, FaSyncAlt, FaFilter, FaSort,
   FaSmile, FaReply, FaCheck, FaExclamationCircle, FaBell, 
   FaHeadset, FaPaperPlane, FaCheckCircle, FaInfoCircle, FaAngleDown, FaAngleUp,
-  FaPaperclip, FaDownload, FaFile, FaFileImage, FaFilePdf, FaFileWord, 
-  FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFileAlt, FaPlus, FaRegClock, FaRegCalendarAlt, FaEye, FaTimes
+  FaPaperclip, FaDownload, FaFile, FaFileImage, FaFilePdf, FaFileExcel, FaFilePowerpoint, FaFileArchive, FaFileAlt, FaPlus, FaRegClock, FaRegCalendarAlt, FaEye, FaTimes
 } from 'react-icons/fa';
-import EmailService from '../../services/email.service';
 import { FiExternalLink } from 'react-icons/fi';
 import TicketService from '../../services/ticket.service';
 import AuthService from '../../services/auth.service';
 import API from '../../services/api.service';
+import EmailService from '../../services/email.service';
 import { API_URL } from "../../constants";
 import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -109,11 +111,18 @@ const TicketsPage = () => {
   const conversationRef = useRef(conversation);
   const showAllEmailsRef = useRef(showAllEmails);
   const [generalMessagesChannel, setGeneralMessagesChannel] = useState(null);
+  const selectedDesk = useMemo(() => desks.find(d => d.id === selectedDeskId), [desks, selectedDeskId]);
   const activeTicketChannelRef = useRef(null);
   const [searchText, setSearchText] = useState('');
   const [filteredTickets, setFilteredTickets] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [ticketsPerPage] = useState(10);
+  const [showCcDetails, setShowCcDetails] = useState(false);
+
+  // CC Management State
+  const [threadCcEmails, setThreadCcEmails] = useState(new Set());
+  const [replyCcEmails, setReplyCcEmails] = useState(new Set());
+  const [ccInput, setCcInput] = useState('');
   
   // Handle ticket search functionality
   const handleTicketSearch = (text) => {
@@ -1276,6 +1285,11 @@ const handleNewReply = useCallback((newReplyMessage) => {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets', filter: `desk_id=eq.${selectedDeskId}` }, payload => {
         console.log('[Supabase Realtime] Received new ticket:', payload);
         if (payload.new) handleNewTicketRef.current(payload.new);
+        if (payload.new) {
+          console.log("------> Received new ticket via Realtime:", payload.new);
+          // Acknowledgment is now handled by the backend
+          console.log("Acknowledgment will be handled by the backend service");
+        }
       })
       // Listen for ticket status updates or other changes
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `desk_id=eq.${selectedDeskId}` }, payload => {
@@ -1321,7 +1335,7 @@ const handleNewReply = useCallback((newReplyMessage) => {
         setGeneralMessagesChannel(null);
       }
     };
-  }, [selectedDeskId, supabase, handleNewTicketRef, handleUpdatedTicketRef, handleNewMessageRef, handleNewReplyRef, selectedTicketRef]); // End of desk-level useEffect
+  }, [selectedDeskId, selectedDesk, supabase, handleNewTicketRef, handleUpdatedTicketRef, handleNewMessageRef, handleNewReplyRef, selectedTicketRef]); // End of desk-level useEffect
 
   // Define commonMessageHandler with useCallback to ensure it's stable
   const commonMessageHandler = useCallback((payload, eventType) => {
@@ -1740,7 +1754,64 @@ const handleNewReply = useCallback((newReplyMessage) => {
   // The conversation is now updated via the ticket-specific Supabase Realtime subscription.
   // The polling-based auto-refresh has been removed.
 
+  // CC Management Logic
+  useEffect(() => {
+    if (conversation && conversation.length > 0) {
+      const currentThreadCcs = new Set();
+      conversation.forEach(message => {
+        if (message.ccRecipients && Array.isArray(message.ccRecipients)) { // Microsoft Graph API structure
+          message.ccRecipients.forEach(cc => {
+            if (cc && cc.emailAddress && cc.emailAddress.address) {
+              currentThreadCcs.add(cc.emailAddress.address.toLowerCase());
+            }
+          });
+        } else if (message.cc_recipients && Array.isArray(message.cc_recipients)) { // Alternative structure (e.g., from DB)
+           message.cc_recipients.forEach(cc_obj => {
+              if (cc_obj && cc_obj.email) currentThreadCcs.add(cc_obj.email.toLowerCase());
+              else if (typeof cc_obj === 'string') currentThreadCcs.add(cc_obj.toLowerCase());
+           });
+        }
+      });
+      setThreadCcEmails(currentThreadCcs);
+      setReplyCcEmails(new Set(currentThreadCcs)); // Initialize reply CCs with thread CCs
+    } else {
+      setThreadCcEmails(new Set());
+      setReplyCcEmails(new Set());
+    }
+  }, [conversation]);
+
+  const isValidEmail = (email) => {
+    return /^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email);
+  };
+
+  const handleAddReplyCc = () => { // Will be called by UI
+    const emailToAdd = ccInput.trim().toLowerCase();
+    if (emailToAdd && isValidEmail(emailToAdd)) {
+      if (replyCcEmails.has(emailToAdd)) {
+        // setError('Email address already in CC list.'); // Optional: specific feedback
+        console.warn("Email already in CC: ", emailToAdd);
+        setCcInput(''); 
+        return;
+      }
+      setReplyCcEmails(prev => new Set(prev).add(emailToAdd));
+      setCcInput('');
+    } else if (emailToAdd) {
+      // setError('Invalid CC email format.'); // Optional: specific feedback
+      console.warn("Invalid CC email format: ", emailToAdd);
+    }
+  };
+
+  const handleRemoveReplyCc = (emailToRemove) => { // Will be called by UI
+    setReplyCcEmails(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(emailToRemove.toLowerCase());
+      return newSet;
+    });
+  };
+
   // Handle sending a reply to a ticket or email
+  
+
   const handleSendReply = async () => {
     if (!replyText.trim() && attachments.length === 0) {
       setError('Please enter a reply or add an attachment.');
@@ -1755,7 +1826,6 @@ const handleNewReply = useCallback((newReplyMessage) => {
     setError(null);
 
     try {
-      // Step 1: Find the latest message from the customer to ensure we reply to them.
       const messageToReplyTo = getLatestCustomerMessage(conversation);
       if (!messageToReplyTo) {
         setError('Cannot reply: No customer message found to reply to.');
@@ -1763,49 +1833,46 @@ const handleNewReply = useCallback((newReplyMessage) => {
         return;
       }
 
-      // Step 2: Prepare the data for the reply.
       const emailId = messageToReplyTo.microsoft_message_id || messageToReplyTo.id;
-      const senderName = userInfo?.name || 'Support Agent';
-      const senderEmail = userInfo?.email;
+      const senderName = userInfo?.name || 'Support Agent'; // Ensure userInfo is available in this component's scope
+      const senderEmail = userInfo?.email; // Ensure userInfo is available in this component's scope
       
-      // Get the current desk name from the desks array
       const currentDesk = desks.find(desk => desk.id.toString() === selectedDeskId.toString());
       const deskName = currentDesk?.name || 'Support Team';
       
-      // Add signature to email content
-      const emailContent = `${replyText}
-<br>
-Thanks & Regards,
-${deskName}`;
+      // Preserve line breaks and blank lines in the reply text
+      const formattedReplyText = replyText.replace(/\n/g, '<br>');
+      const emailContent = `${formattedReplyText}<br><br>Thanks & Regards,<br>${deskName}`;
 
       const formData = new FormData();
       formData.append('emailId', emailId);
       formData.append('desk_id', selectedDeskId);
-      formData.append('content', emailContent); // Use the content with signature
+      formData.append('content', emailContent);
       formData.append('sender_name', senderName);
       formData.append('sender_email', senderEmail);
+      
       attachments.forEach(file => {
         formData.append('attachments', file);
       });
 
-      // Step 3: Send the reply using the email service.
-      // We use replyToEmail as it correctly handles threading in Microsoft Graph.
+      // Add CC recipients to formData
+      const ccEmailsArray = Array.from(replyCcEmails);
+      if (ccEmailsArray.length > 0) {
+        // Backend's EmailService.replyToEmail will need to handle this.
+        // Sending as a comma-separated string is a common approach for FormData.
+        formData.append('cc_recipients', ccEmailsArray.join(','));
+      }
+
       await EmailService.replyToEmail(formData);
       
-      // Step 4: Update the UI and state.
       setSuccess('Reply sent successfully!');
       setReplyText('');
       setAttachments([]);
+      // Consider resetting replyCcEmails, e.g., to new Set(threadCcEmails) or new Set()
+      // For now, it retains the last used CCs for the next reply on the same ticket.
       
-      // Refresh the conversation to show the new reply.
-      // fetchConversationData(selectedTicket, true); // Temporarily commented out for Realtime test
-
-      // Also mark the message as read if it's a direct email.
       if (selectedTicket.id.toString().startsWith('email-')) {
         await EmailService.markAsRead(emailId, selectedDeskId);
-        // The email lists will be updated by the general desk-level Supabase Realtime subscription.
-        // Manually fetching here would cause a disruptive refresh and interfere with the smooth
-        // real-time update of the conversation.
       }
     } catch (err) {
       console.error('Error sending reply:', err);
@@ -2443,16 +2510,12 @@ ${deskName}`;
                   <div>
                     {!selectedTicket.isEmail && selectedTicket.status && 
                       (selectedTicket.status.trim().toLowerCase() === 'open' || 
-                       selectedTicket.status.trim().toLowerCase() === 'reopen' || 
-                       selectedTicket.status.trim().toLowerCase() === 'closed') && (
+                       selectedTicket.status.trim().toLowerCase() === 'reopen') && (
                       <Badge
-                        bg={
-                          selectedTicket.status.trim().toLowerCase() === 'open' ? 'success' : 
-                          'secondary' // for both 'reopen' and 'closed'
-                        }
+                        bg="success"
                         className="text-capitalize"
                       >
-                        {selectedTicket.status}
+                        Open
                       </Badge>
                     )}
                   </div>
@@ -2465,7 +2528,7 @@ ${deskName}`;
                   </span>
                   <span className="text-muted" style={{ color: '#dee2e6' }}>|</span>
                   <span className="ms-2">
-                    <FaRegCalendarAlt className="me-1" />
+                   
                     Raised On: {
                       (() => {
                         try {
@@ -2870,6 +2933,79 @@ ${deskName}`;
                   <Form>
                     <Form.Group>
                       {/* CC field removed */}
+                      {/* Collapsible CC Management UI - Start */}
+                      <div className="mb-2">
+                        <Button 
+                          variant="link"
+                          onClick={() => setShowCcDetails(!showCcDetails)}
+                          aria-controls="cc-management-collapse"
+                          aria-expanded={showCcDetails}
+                          className="p-0 text-decoration-none text-muted d-flex align-items-center"
+                        >
+                          {showCcDetails ? <FaChevronUp className="me-1" /> : <FaChevronDown className="me-1" />}
+                          Manage CC Recipients ({Array.from(replyCcEmails).length > 0 ? `${Array.from(replyCcEmails).length} for reply` : 'view/add'})
+                        </Button>
+                      </div>
+                      <Collapse in={showCcDetails}>
+                        <div id="cc-management-collapse" className="p-2 mb-2 border rounded bg-light" style={{ fontSize: '0.85rem' }}>
+                          {threadCcEmails.size > 0 && (
+                            <div className="mb-2">
+                              <div className="text-muted" style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>Currently CC'd on this thread:</div>
+                              <div>
+                                {Array.from(threadCcEmails).map(email => (
+                                  <Badge pill bg="secondary" text="white" key={`thread-cc-${email}`} className="me-1 mb-1 fw-normal" style={{ fontSize: '0.75rem' }}>
+                                    {email}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="mb-2">
+                            <Form.Group controlId="ccInputGroup" className="mb-0">
+                              <Form.Label className="visually-hidden">Add CC</Form.Label>
+                              <InputGroup size="sm">
+                                <Form.Control
+                                  type="email"
+                                  placeholder="Add CC email for this reply..."
+                                  value={ccInput}
+                                  onChange={(e) => setCcInput(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddReplyCc(); } }}
+                                  disabled={sending}
+                                  style={{ fontSize: '0.85rem' }}
+                                />
+                                <Button variant="outline-secondary" onClick={handleAddReplyCc} size="sm" disabled={sending}>
+                                  Add
+                                </Button>
+                              </InputGroup>
+                            </Form.Group>
+                          </div>
+                          {replyCcEmails.size > 0 && (
+                            <div className="mb-1">
+                              <div className="text-muted" style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>CC on this reply:</div>
+                              <div>
+                                {Array.from(replyCcEmails).map(email => (
+                                  <Badge pill bg="primary" key={`reply-cc-${email}`} className="me-1 mb-1 fw-normal d-inline-flex align-items-center" style={{ fontSize: '0.75rem', padding: '0.3em 0.6em' }}>
+                                    {email}
+                                    <Button 
+                                      variant="link" 
+                                      size="sm" 
+                                      onClick={() => handleRemoveReplyCc(email)} 
+                                      className="p-0 ms-1 text-white text-decoration-none"
+                                      title={`Remove ${email} from CC`}
+                                      style={{lineHeight: '1', fontSize: '1.1rem'}}
+                                      disabled={sending}
+                                    >
+                                      &times;
+                                    </Button>
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </Collapse>
+                      {/* Collapsible CC Management UI - End */}
+
                       <InputGroup>
                         <Form.Control 
                           as="textarea" 

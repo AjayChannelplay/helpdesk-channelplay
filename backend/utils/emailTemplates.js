@@ -73,6 +73,32 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
   return emailHTML;
 }
 
+/**
+ * Generates the HTML content for a new ticket acknowledgment email.
+ * @param {string} customerName - The name of the customer.
+ * @param {string} ticketDisplayId - The user-facing ticket ID.
+ * @param {string} deskName - The name of the helpdesk.
+ * @returns {string} The HTML string for the email.
+ */
+function generateNewTicketAckEmailHTML(customerName, ticketDisplayId, deskName) {
+  const name = customerName || 'Valued Customer';
+  const displayTicketIdText = ticketDisplayId ? `#${ticketDisplayId}` : 'N/A';
+  const plainDeskName = deskName || 'Support'; // Use plain desk name
+
+  const emailHTML = `
+Dear ${name},<br><br>
+Thank you for contacting ${plainDeskName}. We have successfully received your request and created support ticket <b>${displayTicketIdText}</b> for you.<br><br>
+${plainDeskName} team will review your request shortly.<br><br>
+Important Information:<br>
+Please keep this ticket ID <b>${displayTicketIdText}</b> for future reference<br>
+Reply to this email to add any additional information to your ticket<br><br>
+Thanks & Regards,<br>
+${plainDeskName}
+  `;
+  return emailHTML;
+}
+
 module.exports = {
   generateFeedbackEmailHTML,
+  generateNewTicketAckEmailHTML,
 };

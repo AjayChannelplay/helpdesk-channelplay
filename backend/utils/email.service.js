@@ -153,8 +153,11 @@ class EmailService {
       // Determine if we're using the single object or multiple parameters approach
       let emailData;
       if (typeof toOrEmailData === 'object' && toOrEmailData !== null) {
-        // Single object parameter
-        emailData = toOrEmailData;
+        // Single object parameter - ensure we have a body field
+        emailData = { ...toOrEmailData };
+        if (emailData.htmlBody && !emailData.body) {
+          emailData.body = emailData.htmlBody;
+        }
       } else {
         // Multiple parameters
         emailData = {
@@ -162,7 +165,9 @@ class EmailService {
           subject,
           body: htmlBody || textBody,
           ticketId: ticketId || null,
-          messageId: messageId || null
+          messageId: messageId || null,
+          // Include any additional fields that might be needed
+          ...(htmlBody ? { htmlBody } : {})
         };
       }
       
@@ -181,26 +186,141 @@ class EmailService {
   }
 
   // Send email using Microsoft Graph API
+  // async sendMicrosoftEmail(emailData) {
+  //   try {
+  //     const { to, subject, body, ticketId, messageId } = emailData;
+      
+  //     if (!to) {
+  //       throw new Error('Recipient email address is required');
+  //     }
+      
+  //     if (!subject) {
+  //       throw new Error('Email subject is required');
+  //     }
+      
+  //     if (!body) {
+  //       throw new Error('Email body content is required');
+  //     }
+
+  //     // Prepare the email message payload for sendMail endpoint
+  //     const payload = {
+  //       message: {
+  //         subject: subject,
+  //         body: {
+  //           contentType: 'HTML',
+  //           content: body
+  //         },
+  //         toRecipients: [
+  //           {
+  //             emailAddress: {
+  //               address: to
+  //             }
+  //           }
+  //         ],
+  //         internetMessageHeaders: [] // Initialize as empty array
+  //       },
+  //       saveToSentItems: true
+  //     };
+
+  //     // Temporarily commenting out ALL custom headers for testing Graph API header limits
+  //     /*
+  //     // Add custom X-Ticket-ID and X-Message-ID headers if available
+  //     // Temporarily commenting out In-Reply-To and References for testing Graph API behavior
+      
+  //     // if (emailData.inReplyTo) {
+  //     //   payload.message.internetMessageHeaders.push({
+  //     //     name: 'In-Reply-To',
+  //     //     value: emailData.inReplyTo
+  //     //   });
+  //     //   const references = emailData.references || emailData.inReplyTo;
+  //     //   if (references) {
+  //     //     payload.message.internetMessageHeaders.push({
+  //     //       name: 'References',
+  //     //       value: references
+  //     //     });
+  //     //   }
+  //     // }
+      
+
+  //     if (ticketId) {
+  //       payload.message.internetMessageHeaders.push({
+  //         name: 'X-Ticket-ID',
+  //         value: String(ticketId)
+  //       });
+  //     }
+  //     if (messageId) {
+  //       payload.message.internetMessageHeaders.push({
+  //         name: 'X-Message-ID',
+  //         value: String(messageId)
+  //       });
+  //     }
+  //     */
+
+  //     const apiUrl = 'https://graph.microsoft.com/v1.0/me/sendMail';
+  //     console.log('Sending Microsoft email with payload:', JSON.stringify(payload, null, 2));
+
+  //     // Send the email using Microsoft Graph API
+      
+  //     const response = await axios.post(apiUrl, payload, {
+  //       headers: {
+  //         'Authorization': `Bearer ${this.microsoftAccessToken}`,
+  //         'Content-Type': 'application/json',
+  //         'Prefer': 'IdType="ImmutableId"'
+  //       },
+  //       validateStatus: () => true // Don't throw on HTTP error status
+  //     });
+      
+  //     console.log('Microsoft Graph API response:', {
+  //       status: response.status,
+  //       statusText: response.statusText,
+  //       data: response.data
+  //     });
+      
+  //     if (response.status >= 400) {
+  //       // Log the detailed error from Graph API
+  //       const errorDetails = response.data && response.data.error ? response.data.error.message : JSON.stringify(response.data);
+  //       console.error(`Microsoft Graph API Error: ${response.status} ${response.statusText} - ${errorDetails}`);
+  //       throw new Error(`Microsoft Graph API error: ${response.status} ${response.statusText} - ${errorDetails}`);
+  //     }
+      
+  //     return { success: true, response: response.data };
+  //   } catch (error) {
+  //     // Log the error before re-throwing to ensure visibility
+  //     console.error('Error in sendMicrosoftEmail (catch block):', {
+  //       message: error.message,
+  //       stack: error.stack,
+  //       code: error.code,
+  //       // Avoid logging full config data if it's too large or sensitive
+  //       configUrl: error.config ? error.config.url : 'No config URL',
+  //       isAxiosError: error.isAxiosError
+  //     });
+  //     // Ensure the re-thrown error message is informative
+  //     const errorMessage = error.isAxiosError && error.response && error.response.data && error.response.data.error 
+  //                        ? error.response.data.error.message 
+  //                        : error.message;
+  //     throw new Error(`Failed to send Microsoft email: ${errorMessage}`);
+  //   }
+  // }
   async sendMicrosoftEmail(emailData) {
     try {
       const { to, subject, body, ticketId, messageId } = emailData;
-      
+  
       if (!to) {
         throw new Error('Recipient email address is required');
       }
-      
+  
       if (!subject) {
         throw new Error('Email subject is required');
       }
-      
+  
       if (!body) {
         throw new Error('Email body content is required');
       }
-      
-      // Format the email
-      const email = {
+  
+      // Prepare the base email message payload
+      const payload = {
         message: {
-          subject,
+          subject: subject,
           body: {
             contentType: 'HTML',
             content: body
@@ -211,46 +331,82 @@ class EmailService {
                 address: to
               }
             }
-          ],
-          internetMessageHeaders: []
+          ]
+          // We'll conditionally add `internetMessageHeaders` below if needed
         },
-        saveToSentItems: 'true'
+        saveToSentItems: true
       };
-      
-      // Add optional headers only if values are provided
+  
+      // ✅ Safely add up to 2 custom headers
+      const customHeaders = [];
+  
       if (ticketId) {
-        email.message.internetMessageHeaders.push({
+        customHeaders.push({
           name: 'X-Ticket-ID',
           value: String(ticketId)
         });
       }
-      
+  
       if (messageId) {
-        email.message.internetMessageHeaders.push({
+        customHeaders.push({
           name: 'X-Message-ID',
           value: String(messageId)
         });
       }
-      
+  
+      // ✅ Only attach custom headers if any are present
+      if (customHeaders.length > 0 && customHeaders.length <= 2) {
+        payload.message.internetMessageHeaders = customHeaders;
+      }
+  
+      // ✅ Optional: debug payload before sending
+      console.log('Sending Microsoft email with payload:', JSON.stringify(payload, null, 2));
+  
       // Send the email using Microsoft Graph API
-      const response = await axios.post(
-        'https://graph.microsoft.com/v1.0/me/sendMail',
-        email,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.microsoftAccessToken}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
+      const apiUrl = 'https://graph.microsoft.com/v1.0/me/sendMail';
+      const response = await axios.post(apiUrl, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.microsoftAccessToken}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'IdType="ImmutableId"'
+        },
+        validateStatus: () => true // Don't throw on HTTP error status
+      });
+  
+      // ✅ Log the response for debugging
+      console.log('Microsoft Graph API response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response.data
+      });
+  
+      // ✅ Check for error response
+      if (response.status >= 400) {
+        const errorDetails = response.data?.error?.message || JSON.stringify(response.data);
+        console.error(`Microsoft Graph API Error: ${response.status} ${response.statusText} - ${errorDetails}`);
+        throw new Error(`Microsoft Graph API error: ${response.status} ${response.statusText} - ${errorDetails}`);
+      }
+  
       return { success: true, response: response.data };
+  
     } catch (error) {
-      console.error('Error sending Microsoft email:', error);
-      throw new Error(`Failed to send Microsoft email: ${error.message}`);
+      console.error('Error in sendMicrosoftEmail (catch block):', {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        configUrl: error.config ? error.config.url : 'No config URL',
+        isAxiosError: error.isAxiosError
+      });
+  
+      const errorMessage =
+        error.isAxiosError && error.response?.data?.error
+          ? error.response.data.error.message
+          : error.message;
+  
+      throw new Error(`Failed to send Microsoft email: ${errorMessage}`);
     }
   }
-
+  
   // Send email using Gmail API
   async sendGmailEmail(emailData) {
     try {
