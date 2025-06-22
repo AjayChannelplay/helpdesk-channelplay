@@ -211,6 +211,7 @@ exports.updateTicket = async (req, res) => {
     }
     
     // Check if status is changing to closed
+    //console.log("New Result are )))))----00000000",ticket.status)
     const statusChangingToClosed = req.body.status === 'closed' && ticket.status !== 'closed';
     
     // Update ticket
@@ -225,6 +226,7 @@ exports.updateTicket = async (req, res) => {
     });
     
     // Create internal note about the update if requested
+    //console.log("Updating ticketing data are -------********",updatedTicket)
     if (req.body.add_internal_note || statusChangingToClosed) {
       await Message.create({
         ticket_id: req.params.id,
@@ -276,7 +278,7 @@ exports.updateTicket = async (req, res) => {
           };
 
           // Call the resolveTicket method from emailController
-          await emailController.resolveTicket(mockReq, mockRes);
+          await emailController.resolveTicket(mockReq, mockRes,ticket.status);
           console.log('Feedback email sent using resolveTicket controller');
         } else {
           console.log('No recent messages found to send a threaded feedback email for ticket', ticket.id);
