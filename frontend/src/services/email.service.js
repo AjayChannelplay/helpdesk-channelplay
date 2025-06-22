@@ -57,6 +57,7 @@ const EmailService = {
   
   // Reply to an email directly using Microsoft Graph API
   replyToEmail: async (formData) => {
+   
     try {
       const emailId = formData.get('emailId');
       const deskId = formData.get('desk_id');
@@ -84,12 +85,13 @@ const EmailService = {
       };
       
       // Pass desk_id as a query parameter instead of in the form data
+      //console.log("fm-------->",formData)
       const response = await API.post(
         `/emails/${emailId}/reply?desk_id=${encodeURIComponent(deskId)}`, 
         formData,
         config
       );
-      
+      console.log("After sending the response data is ----------M",response)
       return response.data;
     } catch (error) {
       console.error('Error in replyToEmail:', error);

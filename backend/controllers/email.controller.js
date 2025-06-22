@@ -143,31 +143,9 @@ exports.replyToEmail = async (req, res) => {
     const originalCcRecipients = originalMessage.ccRecipients || [];
     console.log('Original CC Recipients:', JSON.stringify(originalCcRecipients, null, 2));
     
-    // Combine original CC recipients with manually added ones
-    // First, create a Set of email addresses to avoid duplicates
-    const ccEmailSet = new Set();
-    
-    // Add manual CC recipients first
-    manualCcRecipients.forEach(recipient => {
-      ccEmailSet.add(recipient.emailAddress.address.toLowerCase());
-    });
-    
-    // Create the combined CC recipients array
+    // Only use manually added CC recipients, don't include original thread CCs
     const formattedCcRecipients = [...manualCcRecipients];
-    
-    // Add original CC recipients if they're not already included
-    originalCcRecipients.forEach(recipient => {
-      const emailAddress = recipient.emailAddress?.address;
-      if (emailAddress && !ccEmailSet.has(emailAddress.toLowerCase())) {
-        ccEmailSet.add(emailAddress.toLowerCase());
-        formattedCcRecipients.push({
-          emailAddress: {
-            address: emailAddress,
-            name: recipient.emailAddress.name || ''
-          }
-        });
-      }
-    });
+    console.log('Using only manual CC recipients for reply:', JSON.stringify(formattedCcRecipients, null, 2));
     
     console.log('Calculated To-Recipients for this reply:', JSON.stringify(calculatedReplyToRecipients, null, 2));
     console.log('Calculated CC-Recipients for this reply (from form + original thread):', JSON.stringify(formattedCcRecipients, null, 2));
@@ -392,13 +370,13 @@ exports.replyToEmail = async (req, res) => {
 
 
 // Resolve a ticket and send a resolution email with feedback options
-exports.resolveTicket = async (req, res) => {
+exports.resolveTicket = async (req, res, status) => {
   try {
     console.log('DEBUGGING resolveTicket request:');
     console.log('Request parameters:', req.params);
     console.log('Request body:', req.body);
     console.log('Request query:', req.query);
-    
+    //console.log("Jiiiiiiiiiiiiiiiiii@@@@",status)
     // Extract emailId from path parameter
     const { emailId } = req.params;
     
@@ -458,7 +436,8 @@ exports.resolveTicket = async (req, res) => {
     const recipientName = originalMessage.from?.emailAddress?.name || 'Valued Customer';
     const deskName = deskData?.name || 'Support Team';
     const userTicketId = ticketData?.user_ticket_id || 'N/A';
-
+    const userTicketStatus = ticketData?.status || 'N/A';
+    //console.log("User Ticket data are------------>",ticketData,userTicketId)
     let baseFeedbackUrlWithScheme;
     const feedbackPath = '/api/feedback/process';
 
@@ -478,7 +457,7 @@ exports.resolveTicket = async (req, res) => {
       </head>
       <body style="font-family: sans-serif; font-size: 14px; color: #333;">
         <p>Dear ${recipientName},</p>
-        <p>We're pleased to inform you that your support Ticket ID: #${userTicketId} has been successfully resolved.</p>
+        <p>We're pleased to inform you that your support Ticket ID: <strong>#${userTicketId}</strong> has been successfully resolved.</p>
         <p>We'd love to hear about your experience! Please rate our service for this request:</p>
         
         <!-- Rating Scale HTML -->
@@ -505,7 +484,50 @@ exports.resolveTicket = async (req, res) => {
           </table>
         </div>
         
-        <p>Note: If you need to reopen this ticket, please reply within 5 days. After this period, a new ticket will need to be created for any additional requests.</p>
+        <p>Note: If you need to reopen this ticket, please reply within 5 days. After this period, a new ticket will be created for any additional requests.</p>
+        <br>
+        <p>Thanks & Regards,<br>${deskName}</p>
+      </body>
+      </html>
+    `;
+    const resolutionContentAfterResolved = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+      <meta charset="UTF-8">
+      </head>
+      <body style="font-family: sans-serif; font-size: 14px; color: #333;">
+        <p>Dear ${recipientName},</p>
+        <p>We'd like to inform you that your support Ticket ID: <strong>#${userTicketId}</strong>, which was previously reopened, has now been resolved again.</p>
+        <p>We truly value your input and would appreciate it if you could share your updated feedback based on your most recent experience.</p>
+        <p>Please rate your experience now:</p>
+        <!-- Rating Scale HTML -->
+        <div style="margin: 25px 0; text-align: left;">
+          <table border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; display: inline-block;">
+            <tr>
+              <td style="font-size: 13px; color: #666; font-weight: 500; padding-right: 15px; vertical-align: middle; white-space: nowrap;">Very Dissatisfied</td>
+              <td style="vertical-align: middle;">
+                <div style="display: flex; gap: 5px;">
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=1" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">1</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=2" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">2</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=3" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#e74c3c'; this.style.borderColor='#e74c3c'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">3</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=4" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">4</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=5" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">5</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=6" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#f1c40f'; this.style.borderColor='#f1c40f'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">6</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=7" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">7</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=8" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#2ecc71'; this.style.borderColor='#2ecc71'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">8</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=9" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#27ae60'; this.style.borderColor='#27ae60'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">9</a>
+                  <a href="${baseFeedbackUrlWithScheme}?ticketId=${originalMessage.conversationId}&messageId=${originalMessage.id}&rating=10" style="display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 50%; color: #495057; text-decoration: none; font-weight: 600; font-size: 14px;" onmouseover="this.style.backgroundColor='#1e8449'; this.style.borderColor='#1e8449'; this.style.color='white';" onmouseout="this.style.backgroundColor='#f8f9fa'; this.style.borderColor='#e9ecef'; this.style.color='#495057';">10</a>
+                </div>
+              </td>
+              <td style="font-size: 13px; color: #666; font-weight: 500; padding-left: 15px; vertical-align: middle; white-space: nowrap;">Very Satisfied</td>
+            </tr>
+          </table>
+        </div>
+        
+        <p>Note: If you still face any issues or wish to discuss further, feel free to reply to this message within 5 days. After that, a new ticket will be raised for any follow-up.</p>
+        <br>
+        <p>Thank you for helping us improve</p>
         <br>
         <p>Thanks & Regards,<br>${deskName}</p>
       </body>
@@ -522,7 +544,7 @@ exports.resolveTicket = async (req, res) => {
           toRecipients: calculatedReplyToRecipients,
           body: {
             contentType: 'HTML',
-            content: resolutionContent
+            content: status === 'open' ? resolutionContent : resolutionContentAfterResolved
           }
         }
       },

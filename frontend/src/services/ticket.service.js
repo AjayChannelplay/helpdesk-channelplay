@@ -153,6 +153,7 @@ const TicketService = {
       const response = await API.get(endpoint);
       
       // Ensure response.data is an array, default to empty array if not
+      console.log("Hii the response are ad the floows---------->",response)
       return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
       console.error('[TicketService] Error fetching ticket messages:', error.response ? error.response.data : error.message);
