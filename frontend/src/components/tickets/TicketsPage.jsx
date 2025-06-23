@@ -2524,29 +2524,40 @@ const TicketsPage = () => {
                                       )}
                                       {ticket.subject || 'No Subject'}
                                     </div>
-                                    <small className="ticket-time">{
-                                      (() => {
-                                        const dateStr = ticket.last_message_at || ticket.updated_at || ticket.created_at;
-                                        if (!dateStr) return '';
-                                        const dateObj = new Date(dateStr);
-                                        // Format time e.g., 03:45 PM
-                                        return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                      })()
-                                    }</small>
                                   </div>
                                   <div className="ticket-info">
-                                    <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
-                                    <div className="ticket-tags mt-1">
-                                      {ticket.message_count === 1 && (
-                                        <Badge bg="primary" className="me-1" pill>
-                                          New
-                                        </Badge>
-                                      )}
-                                      {ticket.status === 'reopen' && (
-                                        <Badge bg="secondary" className="me-1" pill>
-                                          Reopened
-                                        </Badge>
-                                      )}
+                                    <small className="ticket-customer d-block">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
+                                    <div className="d-flex justify-content-between align-items-center w-100">
+                                      <div className="ticket-tags">
+
+                                        {ticket.message_count === 1 && (
+                                          <Badge bg="primary" className="me-1" pill>
+                                            New
+                                          </Badge>
+                                        )}
+                                        {ticket.status === 'reopen' && (
+                                          <Badge bg="secondary" className="me-1" pill>
+                                            Reopened
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <small className="ticket-time text-muted">{
+                                        (() => {
+                                          const dateStr = ticket.last_message_at || ticket.updated_at || ticket.created_at;
+                                          if (!dateStr) return '';
+                                          const dateObj = new Date(dateStr);
+                                          // Format as "DD/MM/YYYY, HH:MM:SS"
+                                          return dateObj.toLocaleString('en-GB', {
+                                            day: '2-digit',
+                                            month: '2-digit',
+                                            year: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                            hour12: false
+                                          }).replace(',', '');
+                                        })()
+                                      }</small>
                                     </div>
                                   </div>
                                 </div>
@@ -3451,17 +3462,23 @@ style.innerHTML = `
     max-width: 85%;
   }
   .ticket-item.compact .ticket-time {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
+    white-space: nowrap;
+    margin-left: 8px;
+    text-align: right;
+    color: #6c757d;
   }
   .ticket-item.compact .ticket-info {
     margin-bottom: 3px;
   }
   .ticket-item.compact .ticket-customer {
     font-size: 0.75rem;
-    max-width: 70%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    margin-right: 8px;
   }
   .ticket-item.compact .ticket-message small {
     font-size: 0.7rem;
