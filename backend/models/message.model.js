@@ -396,14 +396,28 @@ const Message = {
     }
   },
   
-  // Find messages by ticket id, ordered by creation time
-  findByTicketId: async (ticketId) => {
+  /**
+   * Find messages by ticket id
+   * @param {string} ticketId - The ID of the ticket
+   * @param {Object} [options] - Options for the query
+   * @param {boolean} [options.includeFeedback=false] - Whether to include feedback messages
+   * @returns {Promise<Array>} Array of messages
+   */
+  findByTicketId: async (ticketId, { includeFeedback = false } = {}) => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('messages')
-        .select('*, sender:sender_id(id, username)') // Adjust join as per your users table setup
-        .eq('ticket_id', ticketId)
-        .order('created_at', { ascending: true });
+        .select('*, sender:sender_id(id, username)')
+        .eq('ticket_id', ticketId);
+      
+      // Exclude feedback messages by default
+      if (!includeFeedback) {
+        query = query.or('is_feedback.is.null,is_feedback.eq.false');
+      }
+      
+      query = query.order('created_at', { ascending: true });
+      
+      const { data, error } = await query;
 
       if (error) {
         throw new Error(`Error finding messages by ticket ID: ${error.message}`);

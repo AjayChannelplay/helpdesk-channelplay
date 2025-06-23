@@ -532,23 +532,100 @@ exports.processFeedback = async (req, res) => {
       }
     }
   
-    // Create feedback entry with whatever information we have
+    // Check if feedback is already submitted for this ticket
+    if (actualTicketId) {
+      // First check if feedback was already submitted in the tickets table
+      const { data: ticketData, error: ticketError } = await supabase
+        .from('tickets')
+        .select('is_feedback_submitted, feedback_rating')
+        .eq('id', actualTicketId)
+        .single();
+        
+      if (ticketError) {
+        console.error('Error fetching ticket feedback status:', ticketError);
+      } else if (ticketData?.is_feedback_submitted) {
+        // Feedback was already submitted, show message
+        const existingRating = ticketData.feedback_rating || 0;
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Feedback Already Submitted</title>
+            <style>
+              body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background-color: #f5f5f5;
+                color: #333;
+              }
+              .container {
+                background: white;
+                padding: 2rem;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                max-width: 500px;
+                width: 100%;
+                text-align: center;
+              }
+              h1 { color: #e74c3c; margin-top: 0; }
+              .emoji { font-size: 3rem; margin: 1rem 0; }
+              .rating {
+                font-size: 1.2rem;
+                margin: 1rem 0;
+                padding: 0.5rem;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+                display: inline-block;
+              }
+              .note {
+                font-size: 0.9rem;
+                color: #666;
+                margin-top: 1.5rem;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="emoji">⚠️</div>
+              <h1>Feedback Already Submitted</h1>
+              <p>You have already submitted feedback for this ticket.</p>
+              ${existingRating > 0 ? `
+                <div class="rating">
+                  Your rating: ${'★'.repeat(existingRating)}${'☆'.repeat(10 - existingRating)} 
+                  (${existingRating}/10)
+                </div>
+              ` : ''}
+              <p class="note">
+                Thank you for your feedback! Feedback cannot be modified once submitted.
+                If you need further assistance, please contact our support team.
+              </p>
+            </div>
+          </body>
+          </html>
+        `);
+      }
+    }
+    
+    // Prepare feedback data
     const feedbackData = {
-      ticket_id: actualTicketId || null, // Only use a valid database ID, not conversation ID directly
-      conversation_id: ticketId, // Always store the conversation ID
+      ticket_id: actualTicketId || null,
+      conversation_id: ticketId,
       rating: rating,
-      customer_email: customerEmail || (ticket?.customer_email) || 'unknown@customer.com', // Fallback to unknown
+      customer_email: customerEmail || (ticket?.customer_email) || 'unknown@customer.com',
       message_id: messageId || null,
       comments: comments || null,
-      agent_id: agentId,// Link feedback to the agent we found
-      ticket_number:ticket?.user_ticket_id
-
+      agent_id: agentId,
+      ticket_number: ticket?.user_ticket_id
     };
   
     console.log(`Agent ID found for this feedback: ${agentId}`);
   
-    // Log for debugging
-    console.log('Creating feedback with data:', {
+    // Log feedback processing details
+    console.log('Processing feedback with data:', {
       ticket_id: feedbackData.ticket_id,
       conversation_id: feedbackData.conversation_id,
       rating: feedbackData.rating,
@@ -558,12 +635,37 @@ exports.processFeedback = async (req, res) => {
     });
     
     try {
-      const feedback = await Feedback.create(feedbackData);
-      console.log('Feedback recorded successfully:', feedback);
+      // Start a transaction to ensure data consistency
+      try {
+        // Create new feedback entry
+        const feedback = await Feedback.create(feedbackData);
+        console.log('Created new feedback:', feedback.id);
+        
+        // Update the ticket with feedback information
+        const { error: updateError } = await supabase
+          .from('tickets')
+          .update({
+            feedback_rating: rating,
+            feedback_submitted_at: new Date().toISOString(),
+            is_feedback_submitted: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', actualTicketId);
+          
+        if (updateError) {
+          console.error('Error updating ticket feedback status:', updateError);
+          throw updateError;
+        }
+        
+        console.log(`Successfully marked ticket ${actualTicketId} feedback as submitted`);
+        
+      } catch (error) {
+        console.error('Error in feedback submission transaction:', error);
+        throw error; // This will be caught by the outer try-catch
+      }
     } catch (error) {
-      console.error('Error recording feedback:', error);
-      // Even if we failed to record in the database, show the thank you page
-      // so the user has a better experience
+      console.error('Error processing feedback:', error);
+      // Continue to show thank you page even if there was an error
     }
     
     // Return a thank you page with improved UI
