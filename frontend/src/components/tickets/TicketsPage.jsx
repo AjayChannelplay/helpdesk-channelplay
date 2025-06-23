@@ -2840,7 +2840,7 @@ const TicketsPage = () => {
                                 )}
                                 {message.cc && message.cc.length > 0 && (
                                   <small className="ms-2">
-                                    CC: {message.cc.map((cc, index) => (
+                                    Cc: {message.cc.map((cc, index) => (
                                       <span key={index}>{cc.emailAddress ? cc.emailAddress.address : (typeof cc === 'string' ? cc : 'Unknown')}{index < message.cc.length - 1 ? ', ' : ''}</span>
                                     ))}
                                   </small>
@@ -3137,7 +3137,7 @@ const TicketsPage = () => {
                                   {((message.ccRecipients && message.ccRecipients.length > 0) || message.cc || message.cc_recipients || message.cc_addresses) && (
                                     <div className="mb-1">
                                       <small className="text-muted">
-                                        <strong>CC: </strong>
+                                        <strong>Cc: </strong>
                                         {(() => {
                                           // Determine which CC format the message uses
                                           let ccData = [];

@@ -65,7 +65,7 @@ exports.sendTicketAcknowledgment = async (ticket) => {
     // Send the email
     await emailService.sendEmail({
       to: ticket.from_address,
-      subject: `Re: ${ticket.subject || 'Your support ticket'}`,
+      subject: `RE: ${ticket.subject || 'Your support ticket'}`,
       htmlBody: emailHtmlContent,  // Use htmlBody instead of body
       inReplyTo: ticket.initial_message_graph_id || ticket.conversation_id,
       references: ticket.conversation_id
