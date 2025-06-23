@@ -431,12 +431,28 @@ exports.resolveTicket = async (req, res, status) => {
       return res.status(404).json({ message: 'Ticket not found' });
     }
     
+    // Fetch previous feedback for this ticket
+    let previousRating = null;
+    if (ticketData.id) {
+      const { data: feedbackData, error: feedbackError } = await supabase
+        .from('feedback')
+        .select('rating')
+        .eq('ticket_id', ticketData.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+        
+      if (!feedbackError && feedbackData && feedbackData.length > 0) {
+        previousRating = feedbackData[0].rating;
+        console.log(`Found previous rating: ${previousRating} for ticket ${ticketData.id}`);
+      }
+    }
+    
     const deskData = ticketData.desks;
     
     const recipientName = originalMessage.from?.emailAddress?.name || 'Valued Customer';
     const deskName = deskData?.name || 'Support Team';
     const userTicketId = ticketData?.user_ticket_id || 'N/A';
-    const userTicketStatus = ticketData?.status || 'N/A';
+    //const userTicketStatus = ticketData?.status || 'N/A';
     //console.log("User Ticket data are------------>",ticketData,userTicketId)
     let baseFeedbackUrlWithScheme;
     const feedbackPath = '/api/feedback/process';
@@ -448,7 +464,8 @@ exports.resolveTicket = async (req, res, status) => {
       const developmentHost = process.env.BACKEND_URL || 'localhost:3001';
       baseFeedbackUrlWithScheme = `http://${developmentHost}${feedbackPath}`;
     }
-
+    console.log("Desk data are --------->",deskData);
+    console.log("Ticket data are --------->",ticketData)
     const resolutionContent = `
       <!DOCTYPE html>
       <html>
@@ -458,6 +475,7 @@ exports.resolveTicket = async (req, res, status) => {
       <body style="font-family: sans-serif; font-size: 14px; color: #333;">
         <p>Dear ${recipientName},</p>
         <p>We're pleased to inform you that your support Ticket ID: <strong>#${userTicketId}</strong> has been successfully resolved.</p>
+        ${previousRating && previousRating > 0 ? `<p>Your previous rating for this ticket was: <strong>${previousRating}/10</strong></p>` : ''}
         <p>We'd love to hear about your experience! Please rate our service for this request:</p>
         
         <!-- Rating Scale HTML -->
@@ -499,6 +517,7 @@ exports.resolveTicket = async (req, res, status) => {
       <body style="font-family: sans-serif; font-size: 14px; color: #333;">
         <p>Dear ${recipientName},</p>
         <p>We'd like to inform you that your support Ticket ID: <strong>#${userTicketId}</strong>, which was previously reopened, has now been resolved again.</p>
+        ${previousRating && previousRating > 0 ? `<p>Your previous rating for this ticket was: <strong>${previousRating}/10</strong></p>` : ''}
         <p>We truly value your input and would appreciate it if you could share your updated feedback based on your most recent experience.</p>
         <p>Please rate your experience now:</p>
         <!-- Rating Scale HTML -->
@@ -559,45 +578,8 @@ exports.resolveTicket = async (req, res, status) => {
     // The ticket and message statuses are handled by the ticket controller. 
     // This section is removed to prevent redundant database updates and potential recursive triggers.
     
-    // Log the outgoing resolution email to our database
-    try {
-      // Get sender's (desk's) email and name
-      const meResponse = await axios.get('https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const senderGraphUser = meResponse.data;
-      const deskEmailAddress = senderGraphUser.mail || senderGraphUser.userPrincipalName;
-      const deskDisplayName = senderGraphUser.displayName;
-
-      const messageDataForDb = {
-        desk_id: desk_id,
-        microsoft_message_id: null, // Graph API /reply doesn't return the new message ID directly
-        microsoft_conversation_id: originalMessage.conversationId,
-        subject: `Re: ${originalMessage.subject}`, // Prefixed with Re:
-        body_html: resolutionContent,
-        body_preview: "Your ticket has been resolved. Thank you for contacting our support team!",
-        from_address: deskEmailAddress,
-        from_name: deskDisplayName,
-        to_recipients: calculatedReplyToRecipients.map(r => ({ email: r.emailAddress.address, name: r.emailAddress.name })),
-        cc_recipients: [],
-        bcc_recipients: [],
-        sent_at: new Date().toISOString(),
-        direction: 'outgoing',
-        in_reply_to_microsoft_id: emailId,
-        is_read_on_server: true,
-        has_attachments: false,
-        importance: originalMessage.importance,
-        is_internal: false,
-        status: 'closed' // Explicitly mark the feedback email as closed right from creation
-      };
-
-      await Message.logMessage(messageDataForDb);
-      console.log(`[EmailCtrl] Successfully logged resolution email for ticket with original email ${emailId} to DB.`);
-
-    } catch (dbError) {
-      console.error(`[EmailCtrl] Failed to log resolution email to database:`, dbError.message, dbError.stack);
-      // Do not fail the operation if DB logging fails
-    }
+    // Skip logging the feedback email to our database to prevent it from appearing in the thread
+    console.log(`[EmailCtrl] Skipping database logging for feedback email to prevent it from appearing in the ticket thread.`);
     
 
 

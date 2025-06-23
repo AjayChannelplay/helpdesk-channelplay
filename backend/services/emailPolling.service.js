@@ -36,7 +36,121 @@ async function fetchAndProcessEmailsForDesk(deskIntegration) {
     const emails = response.data.value;
     console.log(`[Polling] Fetched ${emails.length} unread emails for desk_id: ${deskIntegration.desk_id}`);
 
-    for (const email of emails) {
+    // Filter out unwanted emails (spam, no-reply, auto-replies, bounces, and bounce notifications)
+    const filteredEmails = emails.filter(email => {
+      const fromEmail = email.from?.emailAddress?.address?.toLowerCase() || '';
+      const subject = (email.subject || '').toLowerCase();
+      const body = (email.bodyPreview || '').toLowerCase();
+      const bodyHtml = (email.body?.content || '').toLowerCase();
+      
+      // Common no-reply and notification emails
+      const isNoReply = fromEmail.includes('noreply') || 
+                       fromEmail.includes('no-reply') ||
+                       fromEmail.includes('notification') ||
+                       fromEmail.includes('bounce') ||
+                       fromEmail.includes('mailer-daemon') ||
+                       fromEmail.includes('mailer@') ||
+                       fromEmail.includes('postmaster@') ||
+                       fromEmail === 'jira@channelplay.atlassian.net' ||
+                       fromEmail.endsWith('@mailer.helpscout.net') ||
+                       fromEmail.endsWith('@notifications.helpscout.com') ||
+                       fromEmail.endsWith('@reply.helpscout.com') ||
+                       fromEmail.endsWith('@reply.helpscout.email') ||
+                       fromEmail.endsWith('@reply.helpscoutapp.com') ||
+                       fromEmail.endsWith('@reply.helpscout.io') ||
+                       fromEmail.endsWith('@reply.helpscout-mail.com') ||
+                       fromEmail.endsWith('@bounces.helpscout.com') ||
+                       fromEmail.endsWith('@bounce.helpscout.com') ||
+                       fromEmail.endsWith('@mail.helpscout.com') ||
+                       fromEmail.endsWith('@bounce.mail.helpscout.com') ||
+                       fromEmail.endsWith('@bounce.helpscout.net');
+      
+      // Spam detection
+      const isSpam = email.internetMessageHeaders?.some(header => 
+        (header.name.toLowerCase() === 'x-spam-flag' && header.value.toLowerCase() === 'yes') ||
+        (header.name.toLowerCase() === 'x-spam-status' && header.value.toLowerCase().includes('yes')) ||
+        (header.name.toLowerCase() === 'x-spam-level' && parseInt(header.value) > 3)
+      ) || false;
+      
+      // Auto-reply detection
+      const isAutoReply = email.internetMessageHeaders?.some(header => 
+        (header.name.toLowerCase() === 'auto-submitted' && header.value.toLowerCase() !== 'no') ||
+        (header.name.toLowerCase() === 'x-auto-response-suppress' && 
+         ['oof', 'autoreply', 'automatic'].some(v => header.value.toLowerCase().includes(v)))
+      ) || 
+      subject.includes('out of office') ||
+      subject.includes('auto') && (subject.includes('reply') || subject.includes('response')) ||
+      body.includes('this is an automatic response') ||
+      body.includes('this is an automated response') ||
+      body.includes('automatic reply') ||
+      body.includes('automatic response') ||
+      body.includes('vacation') ||
+      body.includes('away from my email');
+      
+      // Bounce detection - more comprehensive check
+      const isBounce = subject.includes('undeliverable') || 
+                      subject.includes('delivery status') ||
+                      subject.includes('delivery failure') ||
+                      subject.includes('returned mail') ||
+                      subject.includes('delivery has failed') ||
+                      subject.includes('delivery notification') ||
+                      subject.includes('failure notice') ||
+                      subject.includes('mail delivery failed') ||
+                      subject.includes('mail system error') ||
+                      subject.includes('mail delivery system') ||
+                      subject.includes('returned to sender') ||
+                      subject.includes('undelivered mail') ||
+                      subject.includes('delivery problem') ||
+                      subject.includes('mail delivery problem') ||
+                      subject.includes('returned email') ||
+                      subject.includes('undeliverable message') ||
+                      subject.includes('message blocked') ||
+                      subject.includes('delivery error') ||
+                      subject.includes('mail delivery failed') ||
+                      subject.includes('could not be delivered') ||
+                      subject.includes('delivery has been delayed') ||
+                      subject.includes('mail could not be delivered') ||
+                      subject.includes('delivery incomplete') ||
+                      subject.includes('mail not delivered') ||
+                      subject.includes('message rejected') ||
+                      subject.includes('too many hops') ||
+                      subject.includes('loop detected') ||
+                      subject.includes('mail loop') ||
+                      subject.includes('routing loop');
+      
+      // Check for bounce content in the body
+      const hasBounceContent = body.includes('your message could not be delivered') ||
+                             body.includes('this is the mail system at') ||
+                             body.includes('the following message could not be delivered') ||
+                             body.includes('delivery to the following recipient failed') ||
+                             body.includes('the mail system') && body.includes('could not deliver') ||
+                             body.includes('original message') && (body.includes('returned to sender') || body.includes('undeliverable'));
+
+      // Check for bounce headers in the email
+      const hasBounceHeaders = email.internetMessageHeaders?.some(header => 
+        header.name.toLowerCase().includes('x-failed-recipients') ||
+        header.name.toLowerCase().includes('x-failure') ||
+        header.name.toLowerCase().includes('x-delivery-status') ||
+        header.name.toLowerCase().includes('x-postfix-sender') ||
+        header.name.toLowerCase().includes('x-failed-recipient')
+      ) || false;
+
+      const shouldFilter = isNoReply || isSpam || isAutoReply || isBounce || hasBounceContent || hasBounceHeaders;
+
+      if (shouldFilter) {
+        console.log(`[Polling] Filtered out email from ${fromEmail} - ` +
+                   `isNoReply: ${isNoReply}, isSpam: ${isSpam}, ` +
+                   `isAutoReply: ${isAutoReply}, isBounce: ${isBounce}, ` +
+                   `hasBounceContent: ${hasBounceContent}, hasBounceHeaders: ${hasBounceHeaders}`);
+        return false;
+      }
+      
+      return true;
+    });
+
+    console.log(`[Polling] Processing ${filteredEmails.length} emails after filtering (${emails.length - filteredEmails.length} filtered out)`);
+
+    for (const email of filteredEmails) {
       try {
         // Initialize message data structure
         const messageData = {

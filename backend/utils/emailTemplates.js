@@ -8,7 +8,7 @@
  * @param {string} baseFeedbackUrl - The base URL for the feedback submission endpoint.
  * @returns {string} The HTML string for the email.
  */
-function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdForText, ticketIdForLink, baseFeedbackUrl) {
+function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdForText, ticketIdForLink, baseFeedbackUrl, previousRating = null) {
   let ratingSquaresHTML = '';
   for (let i = 1; i <= 10; i++) {
     const feedbackLink = `${baseFeedbackUrl}?token=${feedbackToken}&rating=${i}&ticket_id=${ticketIdForLink}`;
@@ -41,6 +41,7 @@ function generateFeedbackEmailHTML(customerName, feedbackToken, ticketDisplayIdF
                   <p style="font-size: 22px; color: #343a40; margin-bottom: 10px; margin-top: 0;">Hi ${customerName || 'Valued Customer'},</p>
                   <p style="font-size: 16px; color: #495057; margin-bottom: 25px; line-height: 1.5;">
                     Thank you for contacting us! We'd love to hear about your recent experience with our support for ticket #${ticketDisplayIdForText}.
+                    ${previousRating ? `<br><br><strong>Your previous rating:</strong> ${previousRating}/10` : ''}
                     <br><br>
                     <strong style="font-size: 16px;">Please rate your experience:</strong>
                   </p>

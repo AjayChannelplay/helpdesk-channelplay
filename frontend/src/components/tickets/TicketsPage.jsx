@@ -119,7 +119,7 @@ const TicketsPage = () => {
   const [filteredTickets, setFilteredTickets] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [ticketsPerPage] = useState(10);
-  const [showCcDetails, setShowCcDetails] = useState(false);
+  const [showCcDetails, setShowCcDetails] = useState(true);
   const ccContainerRef = useRef(null);
 
   // CC Management State
@@ -1831,28 +1831,8 @@ const TicketsPage = () => {
   // The conversation is now updated via the ticket-specific Supabase Realtime subscription.
   // The polling-based auto-refresh has been removed.
 
-  // Handle click outside to close CC dropdown
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (showCcDetails) {
-        // Check if click is outside both the CC container and the CC button
-        const clickedOutsideContainer = ccContainerRef.current && !ccContainerRef.current.contains(event.target);
-        const clickedOnCcButton = event.target.closest('[aria-controls="cc-management-collapse"]');
-        
-        if (clickedOutsideContainer && !clickedOnCcButton) {
-          setShowCcDetails(false);
-        }
-      }
-    }
-
-    // Add event listener when component mounts
-    document.addEventListener('mousedown', handleClickOutside);
-
-    // Clean up event listener when component unmounts
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showCcDetails]);
+  // CC dropdown is now controlled only by the CC button click
+  // Removed click-outside handler to prevent closing when clicking outside
 
   // CC Management Logic
   useEffect(() => {
@@ -3236,7 +3216,7 @@ const TicketsPage = () => {
                         </InputGroup>
 
                         {/* CC Management - Moved below textarea */}
-                        <Collapse in={showCcDetails} className="mt-2">
+                        <Collapse in={showCcDetails} className="mt-2" appear={true}>
                           <div ref={ccContainerRef} id="cc-management-collapse" className="p-2 border rounded bg-light">
                             <div className="mb-2">
                               <InputGroup size="sm">

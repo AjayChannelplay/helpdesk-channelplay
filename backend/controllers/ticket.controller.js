@@ -38,10 +38,46 @@ if (process.env.NODE_ENV !== 'test') {
   ticketSubscription = setupTicketAcknowledgmentListener();
 }
 
+// Check if an email should be considered as spam/no-reply
+const isSuspiciousEmail = (email) => {
+  if (!email) return true;
+  
+  const emailStr = email.toLowerCase();
+  
+  // Common no-reply and notification emails
+  const isNoReply = emailStr.includes('noreply') || 
+                   emailStr.includes('no-reply') ||
+                   emailStr.includes('notification') ||
+                   emailStr.includes('bounce') ||
+                   emailStr.includes('mailer-daemon') ||
+                   emailStr.includes('mailer@') ||
+                   emailStr.includes('postmaster@') ||
+                   emailStr.endsWith('@mailer.helpscout.net') ||
+                   emailStr.endsWith('@notifications.helpscout.com') ||
+                   emailStr.endsWith('@reply.helpscout.com') ||
+                   emailStr.endsWith('@reply.helpscout.email') ||
+                   emailStr.endsWith('@reply.helpscoutapp.com') ||
+                   emailStr.endsWith('@reply.helpscout.io') ||
+                   emailStr.endsWith('@reply.helpscout-mail.com') ||
+                   emailStr.endsWith('@bounces.helpscout.com') ||
+                   emailStr.endsWith('@bounce.helpscout.com') ||
+                   emailStr.endsWith('@mail.helpscout.com') ||
+                   emailStr.endsWith('@bounce.mail.helpscout.com') ||
+                   emailStr.endsWith('@bounce.helpscout.net');
+  
+  return isNoReply;
+};
+
 // Send acknowledgment email for a new ticket
 exports.sendTicketAcknowledgment = async (ticket) => {
   try {
     console.log(`Sending acknowledgment for ticket ${ticket.id}`);
+    
+    // Check if the sender's email is suspicious or a no-reply address
+    if (isSuspiciousEmail(ticket.from_address)) {
+      console.log(`Skipping acknowledgment for suspicious email: ${ticket.from_address}`);
+      return { success: false, skipped: true, reason: 'Suspicious email address' };
+    }
     
     // Get desk information
     const desk = await Desk.findById(ticket.desk_id);
@@ -225,16 +261,18 @@ exports.updateTicket = async (req, res) => {
       conversation_id: ticket.conversation_id // Ensure conversation_id is preserved
     });
     
-    // Create internal note about the update if requested
-    //console.log("Updating ticketing data are -------********",updatedTicket)
-    if (req.body.add_internal_note || statusChangingToClosed) {
+    // Create internal note about the update if requested, but skip for status changes to closed
+    if (req.body.add_internal_note) {
       await Message.create({
         ticket_id: req.params.id,
         sender_id: req.userId,
-        content: req.body.update_note || `Ticket status changed to ${req.body.status || ticket.status}`,
+        content: req.body.update_note || `Ticket updated`,
         is_internal: true,
         microsoft_conversation_id: ticket.conversation_id // Ensure internal note is linked to the ticket's conversation
       });
+    } else if (statusChangingToClosed) {
+      // Skip creating a message for status change to closed
+      console.log(`Ticket ${ticket.id} status changed to closed, skipping status change message in thread`);
     }
     
     // Send feedback email if ticket is being closed
