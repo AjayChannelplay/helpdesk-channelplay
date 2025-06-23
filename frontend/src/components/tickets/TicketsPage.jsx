@@ -1039,13 +1039,14 @@ const TicketsPage = () => {
     const initialTicketData = {
       id: newTicketPayload.id,
       subject: newTicketPayload.subject || 'No Subject',
-      status: newTicketPayload.status || 'new',
+      status: 'new', // Force status to 'new' for all incoming tickets to show the New badge
       created_at: newTicketPayload.created_at || new Date().toISOString(),
       last_message_at: newTicketPayload.last_message_at || newTicketPayload.created_at || new Date().toISOString(),
       conversation_id: newTicketPayload.conversation_id,
       from_name: newTicketPayload.from_name || 'Loading...',
       from_address: newTicketPayload.from_address,
       user_ticket_id: newTicketPayload.user_ticket_id, // Include the user_ticket_id for display
+      message_count: 1, // Set initial message count to 1 to ensure New badge shows
       isLoading: true // Mark as loading until we fetch complete data
     };
 
@@ -1098,14 +1099,26 @@ const TicketsPage = () => {
           customer_email: ticketDetails.from_address || ticketDetails.customer_email,
           // Make sure user_ticket_id is preserved from ticketDetails or newTicketPayload
           user_ticket_id: ticketDetails.user_ticket_id || newTicketPayload.user_ticket_id,
+          status: 'new', // Force status to 'new' to ensure the New badge shows
+          message_count: 1, // Ensure message_count is at least 1 to show New badge
           isLoading: false, // No longer loading
           hasCompleteData: true // Flag to indicate we have complete data
         };
 
         // Update ticket in state with complete data
         setTickets(prevTickets => {
+          // Find the existing ticket to preserve its 'new' status if it was just created
+          const existingTicket = prevTickets.find(t => t.id === completeTicket.id);
+          const updatedTicket = {
+            ...completeTicket,
+            // Preserve the 'new' status if the ticket was just created
+            status: existingTicket?.status === 'new' ? 'new' : completeTicket.status,
+            // Ensure message_count is at least 1 to show New badge
+            message_count: Math.max(completeTicket.message_count || 0, 1)
+          };
+          
           const updatedTickets = prevTickets.map(t =>
-            t.id === completeTicket.id ? completeTicket : t
+            t.id === updatedTicket.id ? updatedTicket : t
           );
           return updatedTickets.sort((a, b) => new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at));
         });
@@ -2524,11 +2537,6 @@ const TicketsPage = () => {
                                   <div className="ticket-info">
                                     <small className="ticket-customer">{ticket.customer_name || ticket.customer_email || ticket.from_name || ticket.email || 'N/A'}</small>
                                     <div className="ticket-tags mt-1">
-                                      {ticket.status === 'new' && (
-                                        <Badge bg="primary" className="me-1" pill>
-                                          New
-                                        </Badge>
-                                      )}
                                       {ticket.message_count === 1 && (
                                         <Badge bg="primary" className="me-1" pill>
                                           New
@@ -2832,7 +2840,7 @@ const TicketsPage = () => {
                                 )}
                                 {message.cc && message.cc.length > 0 && (
                                   <small className="ms-2">
-                                    CC: {message.cc.map((cc, index) => (
+                                    Cc: {message.cc.map((cc, index) => (
                                       <span key={index}>{cc.emailAddress ? cc.emailAddress.address : (typeof cc === 'string' ? cc : 'Unknown')}{index < message.cc.length - 1 ? ', ' : ''}</span>
                                     ))}
                                   </small>
@@ -3129,7 +3137,7 @@ const TicketsPage = () => {
                                   {((message.ccRecipients && message.ccRecipients.length > 0) || message.cc || message.cc_recipients || message.cc_addresses) && (
                                     <div className="mb-1">
                                       <small className="text-muted">
-                                        <strong>CC: </strong>
+                                        <strong>Cc: </strong>
                                         {(() => {
                                           // Determine which CC format the message uses
                                           let ccData = [];
